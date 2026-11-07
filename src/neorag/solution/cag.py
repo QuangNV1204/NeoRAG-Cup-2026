@@ -33,7 +33,7 @@ from neorag.solution.graph import KnowledgeGraph
 from neorag.solution.index import BM25Index, DenseIndex
 from neorag.solution.query import QueryAnalysis, QueryAnalyzer, QueryExpander, SearchQuery
 from neorag.solution.retrieve import HybridRetriever
-from neorag.solution.vietnamese import ascii_content_words_raw, clean_answer
+from neorag.solution.vietnamese import ascii_content_words_raw, clean_answer, sanitize_answer
 
 FALLBACK_ANSWER = "Tài liệu hiện có không cung cấp thông tin để trả lời câu hỏi này."
 
@@ -51,8 +51,8 @@ QUY TẮC CHỌN ID:
 
 QUY TẮC TRẢ LỜI:
 - Chỉ dùng thông tin trong tài liệu. Tiếng Việt có dấu, viết thành đoạn văn ngắn, không gạch đầu dòng, không markdown, không ghi id hay trích dẫn [id] trong câu trả lời.
-- Đi thẳng vào câu trả lời, tuyệt đối không dùng cụm 'Theo tài liệu...', 'Dựa trên tài liệu...', không mở bài, không lặp lại câu hỏi, không kết luận, không khuyên nhủ, không thêm nhận xét suy đoán.
-- Câu hỏi có/không thì bắt buộc mở đầu bằng "Có." hoặc "Không.".
+- Đi thẳng vào câu trả lời, tuyệt đối không dùng cụm 'Dựa trên tài liệu được cung cấp,', không mở bài, không lặp lại câu hỏi, không kết luận, không khuyên nhủ, không thêm nhận xét suy đoán.
+- Với câu hỏi có/không mà tài liệu thực sự có thông tin khẳng định hoặc phủ định thì mở đầu bằng "Có." hoặc "Không."; nếu tài liệu không nêu thông tin được hỏi thì TUYỆT ĐỐI KHÔNG mở đầu bằng "Có." hay "Không.", mà bắt đầu trực tiếp bằng "Tài liệu hiện có không có thông tin về ..." hoặc "Tài liệu không nêu ...".
 - Câu hỏi một ý: gói gọn trong 1-2 câu. Câu hỏi nhiều ý/so sánh: tối đa 3-4 câu, trả lời đủ từng ý.
 - Gọi đúng tên CLB đầy đủ (ví dụ "CLB Lập Trình PTIT", "CLB Multimedia PTIT", "CLB Nhà Sáng Tạo Game PTIT (GCC)").
 - Chép NGUYÊN VĂN cụm từ của tài liệu cho tên riêng, ngày tháng, số liệu, tên ban, tên giải, tên sự kiện, khẩu hiệu; giữ nguyên dấu phẩy và từ nối bên trong cụm (ví dụ 'contest ngắn, dài', 'cả CLB Lập Trình PTIT và CLB IT PTIT', 'chỉ áp dụng cho năm 2026'); không chèn thêm từ hoặc mở ngoặc (như viết thêm ProPTIT) vào giữa cụm từ.
@@ -131,42 +131,8 @@ def parse_response(raw: str) -> tuple[list[int], str]:
     elif ids:
         # Không có nhãn TRẢ LỜI: bỏ dòng ID, phần còn lại là câu trả lời.
         answer = _ID_LINE.sub("", raw)
-    ans = clean_answer(answer)
-    # Loại bỏ các tiền tố dẫn dắt thường làm giảm ROUGE-L và Noise Sensitivity
-    boilerplate_prefixes = (
-        "Theo tài liệu,",
-        "Theo tài liệu",
-        "Theo các tài liệu,",
-        "Theo các tài liệu",
-        "Theo thông tin trong tài liệu,",
-        "Theo thông tin trong tài liệu",
-        "Theo thông tin được cung cấp,",
-        "Theo thông tin được cung cấp",
-        "Theo thông tin có trong tài liệu,",
-        "Theo thông tin có trong tài liệu",
-        "Dựa trên tài liệu,",
-        "Dựa trên tài liệu",
-        "Dựa vào tài liệu,",
-        "Dựa vào tài liệu",
-        "Dựa trên thông tin được cung cấp,",
-        "Dựa trên thông tin được cung cấp",
-        "Tài liệu cho biết,",
-        "Tài liệu cho biết",
-        "Tài liệu mô tả,",
-        "Tài liệu mô tả",
-        "Tài liệu ghi nhận,",
-        "Tài liệu ghi nhận",
-        "Tài liệu nêu rõ,",
-        "Tài liệu nêu rõ",
-        "Tài liệu có nêu,",
-        "Tài liệu có nêu",
-    )
-    for pfx in boilerplate_prefixes:
-        if ans.startswith(pfx):
-            ans = ans[len(pfx) :].strip().lstrip(",").strip()
-            if ans:
-                ans = ans[0].upper() + ans[1:]
-    return ids, clean_answer(ans)
+    ans = sanitize_answer(answer)
+    return ids, ans
 
 
 class CAGPipeline(RAGPipeline):
@@ -275,10 +241,6 @@ class CAGPipeline(RAGPipeline):
         self, query: str, hints: list[int], analysis: QueryAnalysis
     ) -> tuple[list[int], str, str]:
         user = f"CÂU HỎI: {query}"
-        if analysis.clubs:
-            user += f"\n(CLB được hỏi: {', '.join(analysis.clubs)})"
-        if analysis.is_multi:
-            user += "\n(Lưu ý: Câu hỏi so sánh/nhiều CLB, cần chọn đủ ID cho từng CLB và trả lời đủ từng ý)"
         if hints and self.hint_count > 0:
             hint_text = ", ".join(str(i) for i in hints[: self.hint_count])
             user += f"\n(Gợi ý tìm kiếm sơ bộ: {hint_text})"
@@ -359,9 +321,6 @@ class CAGPipeline(RAGPipeline):
         for doc_id in [*llm_ids, *hybrid_ids]:
             if doc_id not in retrieved:
                 retrieved.append(doc_id)
-
-        if analysis.is_multi and analysis.main_clubs:
-            retrieved = self._ensure_club_coverage(retrieved, analysis.main_clubs)
 
         retrieved = retrieved[: self.config.max_retrieved] or [self.documents[0].id]
 

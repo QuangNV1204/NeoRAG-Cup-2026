@@ -46,6 +46,7 @@ class DenseIndex:
 
     def fit(self, texts: Sequence[str], name: str = "index") -> DenseIndex:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        (self.cache_dir / "embeddings").mkdir(parents=True, exist_ok=True)
         path = self._cache_path(texts, name)
         if path.exists():
             try:
@@ -67,17 +68,33 @@ class DenseIndex:
             np.savez_compressed(path, matrix=self.matrix)
         return self
 
+    def embed_queries(self, texts: Sequence[str]) -> np.ndarray:
+        """Embed hàng loạt truy vấn trong ít lượt gọi nhất, trả về ma trận (len(texts), dim) chuẩn hóa L2."""
+        items = list(texts)
+        if not items:
+            return np.zeros((0, 0), dtype=np.float32)
+        vectors: list[np.ndarray] = []
+        for start in range(0, len(items), self.batch_size):
+            batch = items[start : start + self.batch_size]
+            arr = np.asarray(self.embed(batch), dtype=np.float32)
+            if arr.ndim == 1:
+                arr = arr.reshape(1, -1)
+            vectors.append(arr)
+        return _normalize_rows(np.vstack(vectors))
+
     def embed_query(self, text: str) -> np.ndarray:
-        vector = np.asarray(self.embed([text]), dtype=np.float32)
-        if vector.ndim == 1:
-            vector = vector.reshape(1, -1)
-        vector = _normalize_rows(vector)[0]
-        return vector
+        return self.embed_queries([text])[0]
 
     def scores(self, query_vector: np.ndarray) -> np.ndarray:
         if self.matrix.size == 0:
             return np.zeros(0, dtype=np.float32)
         return np.asarray(self.matrix @ query_vector, dtype=np.float32)
+
+    def score_matrix(self, query_vectors: np.ndarray) -> np.ndarray:
+        """Tính đồng thời điểm cosine cho nhiều truy vấn: trả về (n_queries, n_items)."""
+        if self.matrix.size == 0 or query_vectors.size == 0:
+            return np.zeros((len(query_vectors), len(self.matrix)), dtype=np.float32)
+        return np.asarray(query_vectors @ self.matrix.T, dtype=np.float32)
 
 
 class BM25Index:

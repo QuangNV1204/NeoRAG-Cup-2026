@@ -11,6 +11,7 @@ from neorag.pipelines.base import RAGOutput, RAGPipeline
 from neorag.solution.cag import CAGPipeline
 from neorag.solution.config import SolutionConfig
 from neorag.solution.corpus import build_chunks
+from neorag.solution.focused import NeoRAGPipeline
 from neorag.solution.generate import AnswerGenerator
 from neorag.solution.graph import KnowledgeGraph
 from neorag.solution.index import BM25Index, DenseIndex
@@ -117,4 +118,4 @@ class RAGAnythingPipeline(RAGPipeline):
         return RAGOutput(answer=answer, retrieved_ids=retrieved_ids)
 
 
-__all__ = ["CAGPipeline", "RAGAnythingPipeline"]
+__all__ = ["CAGPipeline", "NeoRAGPipeline", "RAGAnythingPipeline"]
