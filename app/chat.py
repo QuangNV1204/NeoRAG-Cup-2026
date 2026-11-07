@@ -14,7 +14,7 @@ import streamlit as st
 from neorag.data import load_corpus
 from neorag.pipelines import load_pipeline
 
-PIPELINE = os.getenv("NEORAG_PIPELINE", "neorag.pipelines.baseline:BaselinePipeline")
+PIPELINE = os.getenv("NEORAG_PIPELINE", "neorag.solution.cag:CAGPipeline")
 
 st.set_page_config(page_title="NeoRAG Chatbot - S2B", page_icon="💬")
 st.title("💬 Hỏi đáp cộng đồng S2B")

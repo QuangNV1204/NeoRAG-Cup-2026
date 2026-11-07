@@ -32,6 +32,20 @@ Repository này cung cấp bộ dữ liệu, pipeline baseline, bộ chấm chí
 | [Nộp bài trên aichallenge](docs/aichallenge.md) | Tạo tài khoản, đăng ký cuộc thi, nộp bài, đọc kết quả và xử lý lỗi trên hệ thống chấm |
 | [Đánh giá](docs/evaluation.md) | Định nghĩa các metric, công thức tính điểm và cách quy đổi theo baseline |
 | [Dữ liệu](data/README.md) | Mô tả corpus, bộ câu hỏi, nguồn và mức độ xác minh |
+| [Giải pháp RAG-Anything](docs/solution.md) | Kiến trúc, kết quả và cách chạy pipeline giải pháp mặc định |
+
+## Giải pháp mặc định
+
+Pipeline trong `src/neorag/solution/` lấy cảm hứng từ RAG-Anything nhưng tinh gọn cho
+corpus văn bản: chunk theo câu, hybrid dense `bge-m3` + BM25, multi-query expansion,
+knowledge graph nhẹ và một lượt verifier trước khi trả lời.
+
+```bash
+neorag run train --pipeline neorag.solution.pipeline:RAGAnythingPipeline
+```
+
+Chatbot `app/chat.py` dùng pipeline này theo mặc định; đặt `NEORAG_PIPELINE` để quay
+lại baseline. Chi tiết kiến trúc và kết quả xem [docs/solution.md](docs/solution.md).
 
 ## Lịch trình
 
