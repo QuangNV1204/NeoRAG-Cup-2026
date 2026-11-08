@@ -40,17 +40,19 @@ from neorag.solution.corpus import (
     format_passage_bm25_text,
     format_passage_dense_text,
 )
-from neorag.solution.index import BM25Index, DenseIndex, normalize01
+from neorag.solution.index import BM25Index, DenseIndex, normalize01, saturate_bm25
 from neorag.solution.vietnamese import (
     MAIN_CLUBS,
     S2B_CLUB,
     accented_bm25_tokens,
     ascii_bm25_tokens,
     ascii_text,
+    content_words,
     detect_clubs,
     expand_student_slang,
     has_diacritics,
     is_multi_club_question,
+    parse_temporals,
     sanitize_answer,
 )
 
@@ -76,8 +78,9 @@ QUERY_PLAN_PROMPT = f"""{DOMAIN_GLOSSARY}
 NHIỆM VỤ: Phân tích câu hỏi của người dùng và lập kế hoạch tìm kiếm tài liệu.
 - Giữ nguyên tuyệt đối mọi con số, ngày tháng, năm, nhiệm kỳ, tên riêng, tên phần mềm/cuộc thi trong câu hỏi gốc.
 - Giải nghĩa đúng từ không dấu, viết tắt, tiếng lóng theo đúng CLB và ngữ cảnh ở trên. Không tự bịa câu trả lời.
-- Nếu câu hỏi so sánh nhiều CLB, hỏi cả 3 CLB, hoặc hỏi so sánh nhất trong S2B (ví dụ: CLB nào lâu đời nhất, trẻ nhất, tuyển ít nhất, đều có blog/slogan/mảng thiết kế không...), đặt `SCOPE: MULTI_CLUB` và tạo truy vấn riêng cho TỪNG CLB liên quan (đủ cả 3 CLB nếu hỏi phạm vi S2B/3 CLB).
-- Nếu chỉ hỏi về 1 CLB hoặc 1 chủ đề hẹp, đặt `SCOPE: SINGLE`.
+- Phân biệt rõ SCOPE:
+  + `SCOPE: MULTI_CLUB`: CHỈ dùng khi câu hỏi so sánh giữa nhiều CLB, hỏi cả 3 CLB, hoặc hỏi so sánh nhất trong S2B (ví dụ: CLB nào lâu đời nhất, trẻ nhất, tuyển ít nhất, đều có blog/slogan/link đăng ký không...). Khi đó tạo truy vấn riêng cho TỪNG CLB liên quan (đủ cả 3 CLB nếu hỏi phạm vi S2B/3 CLB).
+  + `SCOPE: SINGLE`: Khi câu hỏi chỉ hỏi về 1 CLB, 1 sự kiện cụ thể, hoặc 1 ngành học cụ thể (ví dụ sinh viên ngành đa phương tiện/DPT, sinh viên ngành KHMT, sinh viên ngành Marketing, học sinh năm 2, chưa có laptop...). Tuyệt đối không nhầm câu hỏi về một ngành học thành MULTI_CLUB!
 - Tạo 3 đến 5 truy vấn tìm kiếm ngắn gọn, giàu từ khóa khớp với văn phong tài liệu (kể cả thuật ngữ tiếng Anh liên quan nếu câu hỏi mô tả gián tiếp).
 
 Trả về ĐÚNG định dạng sau (không giải thích thêm):
@@ -109,8 +112,13 @@ NHIỆM VỤ: Đọc kỹ toàn bộ ứng viên và xác định:
    - `UNANSWERABLE`: Tài liệu HOÀN TOÀN KHÔNG CÓ thông tin trả lời câu hỏi chính (ví dụ: hỏi phí/quỹ hằng tháng của Multimedia hay GCC; hỏi giải thưởng của Multimedia; hỏi S2B viết tắt của từ gì; hỏi biệt danh của một ban không được nêu biệt danh; hỏi tên bài hát truyền thống khi tài liệu chỉ nói số lượng; hỏi phòng/chỗ ngồi riêng của GCC; hỏi công cụ/engine của một nhóm khi tài liệu chỉ nêu tên nhóm; hỏi phần mềm cụ thể như Premiere khi tài liệu chỉ nói chung về quay phim/làm phim; hỏi Phó Chủ nhiệm GCC; hỏi fanpage/website riêng của S2B; hỏi địa điểm tổ chức một sự kiện năm cụ thể không được ghi).
    *Lưu ý quan trọng*: Câu hỏi dạng "Có ... không?" mà tài liệu KHÔNG HỀ NHẮC TỚI điều được hỏi thì KHÔNG PHẢI là đáp án "Không", mà phải xếp là `UNANSWERABLE` (hoặc `PARTIAL` nếu có ý khác trả lời được)!
 
-2. `CORE_IDS`: Danh sách ID tối thiểu (1 đến 6 ID, xếp theo mức độ quan trọng giảm dần, cách nhau bởi dấu phẩy) trực tiếp dùng để viết câu trả lời:
-   - Với `ANSWERABLE` / `PARTIAL`: CHỈ chọn những đoạn thực sự chứa dữ kiện trả lời câu hỏi. KHÔNG chọn đoạn thừa cùng CLB nhưng khác chủ đề được hỏi. Kiểm tra kỹ đúng CLB/nhánh (không lấy đoạn của ProPTIT cho câu hỏi riêng về nhánh Dev/Art của GCC; không lấy đoạn của GCC cho câu hỏi riêng về Team Game của ProPTIT). Nếu hỏi nhiều giai đoạn giải thưởng, nhiều nhiệm kỳ BCN, hai nguồn cũ/mới hoặc so sánh nhiều CLB thì chọn ĐỦ các đoạn liên quan.
+2. `CORE_IDS`: Danh sách ID tối thiểu (1 đến 4 ID, xếp theo mức độ quan trọng giảm dần, cách nhau bởi dấu phẩy) trực tiếp dùng để viết câu trả lời:
+   - Với `ANSWERABLE` / `PARTIAL`:
+     + CHỈ chọn những đoạn THỰC SỰ CẦN THIẾT và TRỰC TIẾP chứa dữ kiện trả lời câu hỏi.
+     + Đoạn chứa câu trả lời trực tiếp cho câu hỏi chính PHẢI ĐỨNG Ở VỊ TRÍ ĐẦU TIÊN (rank 1).
+     + Với câu hỏi 1 ý / 1 CLB / 1 ngành học: CHỈ CHỌN 1 ĐẾN 2 ID (tối đa 3 ID nếu câu hỏi có 2 ý nhỏ). TUYỆT ĐỐI KHÔNG chọn đoạn của CLB khác (ví dụ: hỏi ngành Đa phương tiện thì CHỈ chọn CLB Multimedia PTIT, tuyệt đối không chọn đoạn của ProPTIT hay GCC; hỏi sinh viên Marketing thì CHỈ chọn GCC)!
+     + Với câu hỏi so sánh 3 CLB: CHỌN ĐÚNG 1 đoạn tiêu biểu nhất cho MỖI CLB (tổng 3 đoạn, mỗi CLB 1 đoạn).
+     + Các đoạn chỉ mang tính bối cảnh phụ hoặc liên quan xa thì đưa vào `EXTRA_IDS`, KHÔNG đưa vào `CORE_IDS`.
    - Với `UNANSWERABLE`: Nếu có 1-2 đoạn nhắc tới đối tượng/khái niệm gần nhất liên quan đến câu hỏi (ví dụ đoạn giới thiệu S2B khi hỏi S2B viết tắt của gì; đoạn liệt kê các ban khi hỏi biệt danh một ban; đoạn nói về vòng Training khi hỏi thời lượng vòng đó; đoạn ghi Chủ nhiệm khi hỏi Phó Chủ nhiệm), hãy ghi 1-2 ID đó vào `CORE_IDS`. Nếu hoàn toàn không có đoạn nào liên quan trực tiếp (như phí của Multimedia/GCC, giải thưởng Multimedia, fanpage riêng của S2B), ghi `NONE`.
 
 3. `EXTRA_IDS`: Tối đa 4 ID liên quan tiếp theo (không trùng `CORE_IDS`) để dự phòng xếp hạng truy xuất, hoặc `NONE`.
@@ -123,7 +131,7 @@ EXTRA_IDS: <các số ID cách nhau dấu phẩy, hoặc NONE>"""
 COMPOSE_SYSTEM_PROMPT = """Bạn là trợ lý hỏi đáp chuẩn xác của cộng đồng S2B tại Học viện Công nghệ Bưu chính Viễn thông (PTIT), gồm CLB Lập Trình PTIT (ProPTIT), CLB Multimedia PTIT (MPC) và CLB Nhà Sáng Tạo Game PTIT (GCC).
 Bạn CHỈ sử dụng thông tin có trong các đoạn tài liệu được cung cấp để trả lời đúng trọng tâm câu hỏi."""
 
-COMPOSE_USER_PROMPT = """CÁC VÍ DỤ ĐÁP ÁN CHUẨN THAM KHẢO (học cách diễn đạt súc tích, cách giữ nguyên cụm từ gốc và cách xử lý khi thiếu thông tin):
+COMPOSE_USER_PROMPT = """CÁC VÍ DỤ ĐÁP ÁN CHUẨN THAM KHẢO (học cách diễn đạt súc tích, độ dài ngắn gọn và cách dùng từ chuẩn của BTC):
 {fewshot_block}
 
 ---
@@ -136,35 +144,48 @@ THÔNG TIN CÂU HỎI HIỆN TẠI:
 {context_block}
 
 QUY TẮC BẮT BUỘC KHI VIẾT CÂU TRẢ LỜI:
-1. **Phạm vi & Chống nhiễu tuyệt đối**:
-   - CHỈ dùng thông tin trong `ĐOẠN TÀI LIỆU CHÍNH` ở trên và CHỈ trả lời đúng những gì câu hỏi hỏi.
-   - TUYỆT ĐỐI KHÔNG đưa thêm thông tin phụ ngoài phạm vi câu hỏi (như học bổng, điểm rèn luyện, quỹ, sự kiện khác...) dù có xuất hiện trong đoạn văn.
-   - TUYỆT ĐỐI KHÔNG khuyên nhủ ("bạn nên liên hệ fanpage...", "hãy hỏi trực tiếp..."), trừ khi nguyên văn đoạn tài liệu có ghi câu hướng dẫn theo dõi fanpage để cập nhật (như thông báo tuyển thành viên). Không bình luận, không suy đoán ngoài văn bản.
+1. **Chiến lược Extractive Span (Trích xuất nguyên văn tối đa & Tối ưu Groundedness/ROUGE-L)**:
+   - Tối đa hóa việc trích xuất NGUYÊN VĂN các mệnh đề, cụm từ chứa dữ kiện trực tiếp từ `ĐOẠN TÀI LIỆU CHÍNH`.
+   - TUYỆT ĐỐI KHÔNG tự tiện diễn đạt lại (paraphrase) bằng từ đồng nghĩa khi trong tài liệu đã có cụm từ chính xác.
+   - Giữ NGUYÊN VĂN 100%: mọi tên riêng, con số, mốc ngày/tháng/năm, tên giải thưởng, tên ban, biệt danh, tên cuộc thi, liên kết fanpage/website/github/tiktok.
+   - Mọi từ ngữ, sự kiện trong câu trả lời đều phải có căn cứ nguyên văn trong đoạn tài liệu chính (đảm bảo Groundedness tuyệt đối).
 
-2. **Quy tắc Từ chối (`UNANSWERABLE`) & Thiếu một phần dữ liệu (`PARTIAL`) — CỰC KỲ QUAN TRỌNG**:
+2. **Đồng bộ chuẩn hóa tên CLB & Mốc thời gian (Chuẩn theo tập Train)**:
+   - Tên CLB: Bắt buộc dùng đúng danh xưng chính thức: `CLB Lập Trình PTIT`, `CLB Multimedia PTIT`, `CLB Nhà Sáng Tạo Game PTIT (GCC)`, `Cộng đồng S2B`.
+   - Mốc thời gian: Luôn ghi rõ `nhiệm kỳ YYYY-YYYY` (không viết tắt `nk`), `giai đoạn YYYY-YYYY`, `năm YYYY`, ngày `DD/MM/YYYY`, `Gen X` (viết hoa chữ G).
+
+3. **Phạm vi & Trả lời trực tiếp (Chống nhiễu tuyệt đối)**:
+   - CHỈ dùng thông tin trong `ĐOẠN TÀI LIỆU CHÍNH` ở trên và CHỈ trả lời đúng những gì câu hỏi hỏi.
+   - Trả lời trực tiếp, tự tin, đi thẳng vào đáp án.
+   - TUYỆT ĐỐI KHÔNG thêm các câu phân bua, giải thích thừa thãi ngoài lề như "Tài liệu không so sánh với Python", "Tài liệu không nêu học phí trung tâm ngoài", "Tài liệu không ghi quy định riêng cho anh dạy", "Tài liệu không nêu yêu cầu kỹ năng của mảng này", "nhưng không ghi rõ sự kiện này có diễn ra trong vòng training hay không". Khi tài liệu đã có thông tin trả lời ý chính, hãy nêu rõ thông tin đó một cách súc tích.
+   - TUYỆT ĐỐI KHÔNG đưa thêm thông tin phụ ngoài phạm vi câu hỏi (như học bổng, điểm rèn luyện, quỹ, các sự kiện khác...) dù có xuất hiện trong đoạn tài liệu.
+   - TUYỆT ĐỐI KHÔNG khuyên nhủ ("bạn nên liên hệ fanpage...", "hãy hỏi trực tiếp..."), trừ khi nguyên văn đoạn tài liệu có câu hướng dẫn theo dõi fanpage để cập nhật (như thông báo tuyển thành viên).
+
+2. **Quy tắc Từ chối (`UNANSWERABLE`) & Thiếu một phần dữ liệu (`PARTIAL`)**:
    - Khi `Trạng thái dữ liệu` là `UNANSWERABLE` (hoặc tài liệu không hề đề cập chi tiết được hỏi, kể cả câu hỏi dạng "Có ... không?"):
-     + **TUYỆT ĐỐI KHÔNG** mở đầu bằng "Có.", "Không.", "Chưa." hay khẳng định phủ định! (Nếu tài liệu không nhắc tới phần mềm Premiere, phòng riêng GCC, tên bài hát, phí CLB..., không được nói là CLB không có/không dạy, mà phải nói tài liệu không nêu!).
+     + **TUYỆT ĐỐI KHÔNG** mở đầu bằng "Có.", "Không.", "Chưa." hay khẳng định phủ định!
      + Mở đầu trực tiếp bằng: `"Tài liệu hiện có không có thông tin về ..."` hoặc `"Tài liệu không nêu ..."` / `"Tài liệu không ghi ..."`.
-     + Nếu trong `ĐOẠN TÀI LIỆU CHÍNH` có thông tin liên quan gần nhất (ví dụ câu hỏi hỏi biệt danh Ban Thiết kế mà đoạn văn chỉ nêu biệt danh 3 ban khác; hoặc hỏi thời lượng vòng Training Multimedia mà chỉ có thời điểm bắt đầu; hoặc hỏi Phó Chủ nhiệm GCC mà chỉ ghi Chủ nhiệm), hãy nêu ngắn gọn trong 1 mệnh đề/câu tiếp theo: `"tài liệu chỉ cho biết ..."` và tuyệt đối không coi đó là đáp án cho điều bị thiếu.
-   - Khi `Trạng thái dữ liệu` là `PARTIAL`: trả lời đầy đủ phần thông tin tài liệu có ghi, và nói rõ phần nào tài liệu không nêu/không ghi.
+     + Nếu trong `ĐOẠN TÀI LIỆU CHÍNH` có thông tin liên quan gần nhất (ví dụ hỏi biệt danh Ban Thiết kế mà đoạn văn chỉ nêu biệt danh 3 ban khác; hoặc hỏi thời lượng vòng Training Multimedia mà chỉ có thời điểm bắt đầu; hoặc hỏi Phó Chủ nhiệm GCC mà chỉ ghi Chủ nhiệm), hãy nêu ngắn gọn trong câu tiếp theo: `"Tài liệu chỉ cho biết [thông tin liên quan ngắn gọn]."` và không coi đó là đáp án cho điều bị thiếu.
+   - Khi `Trạng thái dữ liệu` là `PARTIAL`: trả lời đầy đủ phần thông tin tài liệu có ghi trong 1-2 câu, và nói rõ phần nào tài liệu không ghi/không có.
 
 3. **Quy tắc Câu hỏi Có/Không khi ĐỦ dữ liệu (`ANSWERABLE`)**:
-   - CHỈ khi `ĐOẠN TÀI LIỆU CHÍNH` thực sự có thông tin khẳng định hoặc phủ định điều được hỏi thì mới mở đầu ngắn gọn bằng `"Có."`, `"Không."`, `"Đúng."`, `"Được."`, `"Không cố định:"`, `"Chưa trễ."`, `"Chưa chắc."` tùy đúng ngữ nghĩa tài liệu, rồi nêu ngay dữ kiện chứng minh từ tài liệu.
+   - CHỈ khi `ĐOẠN TÀI LIỆU CHÍNH` thực sự có thông tin khẳng định hoặc phủ định điều được hỏi thì mới mở đầu ngắn gọn bằng `"Có."`, `"Không."`, `"Đúng."`, `"Được."`, `"Không cố định:"`, `"Chưa trễ."`, `"Chưa chắc."`, `"Không bắt buộc."` tùy đúng ngữ nghĩa tài liệu, rồi nêu ngay dữ kiện chứng minh từ tài liệu.
 
-4. **Bám sát nguyên văn & Giữ mốc thời gian/nguồn**:
+4. **Độ dài súc tích & Tối ưu ROUGE-L (RẤT QUAN TRỌNG)**:
+   - Đáp án chuẩn của BTC có độ dài trung bình rất ngắn (~150–250 ký tự, 1–2 câu).
+   - Câu hỏi một ý / một CLB: BẮT BUỘC gói gọn trong đúng 1 đến 2 câu súc tích (khoảng 140–240 ký tự). Tránh viết dài, lan man vì sẽ làm giảm mạnh điểm ROUGE-L!
+   - Câu hỏi nhiều ý / so sánh 3 CLB: Tối đa 2 đến 3 câu (khoảng 220–350 ký tự), trả lời đủ từng ý.
+   - Câu đầu tiên phải nêu rõ tên đầy đủ của CLB / chủ thể được hỏi (ví dụ `CLB Lập Trình PTIT`, `CLB Multimedia PTIT`, `CLB Nhà Sáng Tạo Game PTIT (GCC)`, `Cộng đồng S2B`) để câu trả lời tự trọn nghĩa và đạt điểm Response Relevancy cao.
+
+5. **Bám sát nguyên văn & Giữ mốc thời gian/nguồn**:
    - Chép NGUYÊN VĂN cụm từ quan trọng trong tài liệu cho ngày/tháng/năm (`09/10/2011`), khoảng thời gian (`hai tháng`, `khoảng 3 tháng`, `khoảng 1 tháng`, `24 giờ`), tên riêng, tên giải thưởng (`Giải Ba Chuyên Tin 2022`), tên ban & biệt danh (`Ban Nội dung (The Bards)`), tên cuộc thi (`ProJApp`, `ProPixelGameJam`), khẩu hiệu, email, số điện thoại, đường link. Không tự chèn từ mở ngoặc vào giữa cụm từ gốc.
-   - Nêu đủ tất cả các mục cùng loại mà tài liệu liệt kê liên quan trực tiếp đến câu hỏi (đủ các giải/năm được hỏi, đủ các vòng, đủ các ban, đủ hai nguồn cũ/mới nếu tài liệu ghi cả hai).
    - Giữ rõ bối cảnh nguồn hoặc thời điểm khi tài liệu có gắn mốc (ví dụ: `"Theo Phòng truyền thống của CLB Lập Trình PTIT..."`, `"Theo bài tuyển thành viên năm 2026..."`, `"nhiệm kỳ 2025-2026"`, `"Các mốc thời gian này chỉ áp dụng cho đợt tuyển năm 2026"`).
-   - Với câu hỏi tính số năm/khoảng thời gian hoặc đếm số lượng: kiểm tra kỹ phép trừ ngày/tháng/năm (chú ý trước hay sau ngày sinh nhật trong năm đó; ví dụ thành lập `09/10/2011` thì tháng `8/2026` là đã qua `14 năm` hoạt động và đến đúng ngày `09/10/2026` là tròn `15 năm`) và đếm chính xác từng người/mục trong danh sách.
-
-5. **Hình thức & Độ dài**:
-   - Câu đầu tiên phải nêu rõ tên đầy đủ của CLB / chủ thể được hỏi (ví dụ `CLB Lập Trình PTIT`, `CLB Multimedia PTIT`, `CLB Nhà Sáng Tạo Game PTIT (GCC)`, `Cộng đồng S2B`) để câu trả lời tự trọn nghĩa.
-   - Viết thành 1 đoạn văn tiếng Việt có dấu; câu một ý dài 1-2 câu, câu nhiều ý/so sánh dài 2-4 câu.
-   - KHÔNG dùng markdown, KHÔNG in đậm, KHÔNG gạch đầu dòng, KHÔNG ghi mã `[id]` trong câu trả lời, KHÔNG mở đầu bằng cụm sáo rỗng `"Dựa trên tài liệu được cung cấp,"`.
+   - Với câu hỏi tính số năm/khoảng thời gian: kiểm tra kỹ phép trừ ngày/tháng/năm (ví dụ thành lập `09/10/2011` thì tháng `8/2026` là đã qua `14 năm` hoạt động và đến đúng ngày `09/10/2026` là tròn `15 năm`).
+   - KHÔNG dùng markdown, KHÔNG in đậm, KHÔNG gạch đầu dòng, KHÔNG ghi mã `[id]` trong câu trả lời.
 
 Hãy thực hiện theo ĐÚNG 2 mục dưới đây:
-KIỂM TRA: <1-2 dòng ngắn kiểm tra nhanh: các ý câu hỏi hỏi, phép tính ngày/số lượng nếu có, dữ kiện nào có/thiếu trong đoạn chính>
-TRẢ LỜI: <đoạn văn câu trả lời cuối cùng duy nhất>"""
+KIỂM TRA: <1 dòng ngắn kiểm tra: câu hỏi hỏi ý gì, dữ kiện trả lời trực tiếp trong đoạn chính là gì, độ dài dự kiến 1-2 câu>
+TRẢ LỜI: <đoạn văn câu trả lời cuối cùng duy nhất, súc tích 1-2 câu>"""
 
 _SCOPE_RE = re.compile(r"^\s*SCOPE\s*[:：]\s*(SINGLE|MULTI_CLUB)\b", re.I | re.M)
 _NORMALIZED_RE = re.compile(r"^\s*NORMALIZED\s*[:：]\s*(.+)$", re.I | re.M)
@@ -320,17 +341,18 @@ class TrainFewShotBank:
 
         upper_status = status.upper()
         if upper_status == "UNANSWERABLE":
-            _take(abstain_idxs, min(3, k))
+            _take(abstain_idxs, min(4, k))
             _take(partial_idxs, 1)
             _take(answerable_idxs, k)
         elif upper_status == "PARTIAL":
-            _take(partial_idxs, 2)
+            _take(partial_idxs, 3)
             _take(abstain_idxs, 1)
             _take(answerable_idxs, k)
         else:
-            _take(answerable_idxs, max(1, k - 2))
+            # Với ANSWERABLE: lấy 100% ví dụ ANSWERABLE để LLM học văn phong tự tin, trực tiếp,
+            # tuyệt đối không đưa ví dụ từ chối để tránh mô hình bắt chước các câu phân bua/rào đón thừa.
+            _take(answerable_idxs, k)
             _take(partial_idxs, 1)
-            _take(abstain_idxs, 1)
             _take(eligible, k)
 
         return [(self.rows[i]["query"], self.rows[i]["answer"]) for i in chosen[:k]]
@@ -456,6 +478,7 @@ class WholePassageHybridRetriever:
         self.siblings_by_group: dict[tuple[str, str], list[int]] = {}
         for idx, doc in enumerate(documents):
             self.siblings_by_group.setdefault((doc.club, doc.topic), []).append(idx)
+        self.doc_temporals = [parse_temporals(doc.text) for doc in documents]
 
     def retrieve_candidates(
         self, plan: QueryPlan
@@ -486,8 +509,8 @@ class WholePassageHybridRetriever:
             # Ưu tiên Whole-Passage (0.65) làm trụ cột, bổ trợ bởi mệnh đề chi tiết (0.35).
             dense_s = 0.65 * whole_s + 0.35 * unit_s
 
-            acc_s = normalize01(self.bm25_accented.scores(q_text))
-            asc_s = normalize01(self.bm25_ascii.scores(q_text))
+            acc_s = saturate_bm25(self.bm25_accented.scores(q_text), k=12.0)
+            asc_s = saturate_bm25(self.bm25_ascii.scores(q_text), k=12.0)
             sparse_s = (0.55 * acc_s + 0.45 * asc_s) if has_diacritics(q_text) else (0.20 * acc_s + 0.80 * asc_s)
 
             combined = (0.62 * dense_s + 0.38 * sparse_s) * float(q_weight)
@@ -501,6 +524,43 @@ class WholePassageHybridRetriever:
         mean_s = normalize01(per_query_scores.mean(axis=0))
         rrf_norm = normalize01(rrf_scores)
         final_scores = 0.55 * max_s + 0.15 * mean_s + 0.30 * rrf_norm
+
+        # Nhẹ nhàng cộng điểm cho CLB được hỏi nếu câu hỏi chỉ hỏi về 1 CLB duy nhất
+        if plan.scope == "SINGLE":
+            clubs = detect_clubs(plan.normalized_query)
+            if len(clubs) == 1:
+                target_club = clubs[0]
+                for idx, doc in enumerate(self.documents):
+                    if doc.club == target_club:
+                        final_scores[idx] += 0.04
+
+        # Thưởng / phạt thời gian (Temporal Penalty & Boost):
+        # Tránh nhầm Ban chủ nhiệm / Giải thưởng khác năm/nhiệm kỳ
+        q_temp = parse_temporals(f"{plan.raw_query} {plan.normalized_query}")
+        if q_temp["years"] or q_temp["ranges"]:
+            q_years = q_temp["years"]
+            q_ranges = set(q_temp["ranges"])
+            for idx, doc in enumerate(self.documents):
+                d_temp = self.doc_temporals[idx]
+                d_years = d_temp["years"]
+                d_ranges = set(d_temp["ranges"])
+                is_temporal_doc = (
+                    doc.topic in _SERIES_TOPICS
+                    or bool(d_ranges)
+                    or "nhiệm kỳ" in doc.text.lower()
+                    or "giai đoạn" in doc.text.lower()
+                )
+                if is_temporal_doc and d_years:
+                    common_years = d_years & q_years
+                    if not common_years:
+                        # Mốc thời gian hoàn toàn lệch với câu hỏi -> phạt Temporal Penalty
+                        final_scores[idx] -= 0.14
+                    else:
+                        # Khớp năm -> thưởng điểm
+                        final_scores[idx] += 0.08
+                        if q_ranges & d_ranges:
+                            # Khớp chính xác dải nhiệm kỳ/giai đoạn -> thưởng thêm
+                            final_scores[idx] += 0.08
 
         global_order = [int(i) for i in np.argsort(-final_scores)]
         pool_indices = self._build_candidate_pool(global_order, final_scores, plan.scope)
@@ -567,6 +627,101 @@ class EvidenceSelector:
         self.model = model
         self.max_core_ids = max_core_ids
 
+    @staticmethod
+    def _rerank_core_ids(
+        core_ids: list[int],
+        doc_map: dict[int, Document],
+        plan: QueryPlan,
+        hybrid_rank: dict[int, int],
+    ) -> list[int]:
+        """Sắp xếp lại nội bộ CORE_IDS: đưa đoạn trực tiếp trả lời câu hỏi lên rank 1 (tối ưu MRR@5 & NDCG@5)."""
+        if len(core_ids) <= 1:
+            return core_ids
+
+        q_temp = parse_temporals(f"{plan.raw_query} {plan.normalized_query}")
+        q_years = q_temp["years"]
+        q_ranges = set(q_temp["ranges"])
+        q_words = set(content_words(plan.normalized_query.lower()))
+
+        scored_ids: list[tuple[float, int]] = []
+        for orig_idx, cid in enumerate(core_ids):
+            if cid not in doc_map:
+                scored_ids.append((-999.0, cid))
+                continue
+            doc = doc_map[cid]
+            d_temp = parse_temporals(doc.text)
+            d_years = d_temp["years"]
+            d_ranges = set(d_temp["ranges"])
+
+            score = 0.0
+
+            # 1. Khớp thời gian
+            if q_years:
+                if d_years & q_years:
+                    score += 25.0
+                    if q_ranges & d_ranges:
+                        score += 15.0
+                elif d_years:
+                    score -= 25.0
+
+            # 2. Khớp từ khóa thực thể / nội dung
+            d_words = set(content_words(doc.text.lower()))
+            overlap = len(q_words & d_words)
+            score += float(overlap) * 2.0
+
+            # 3. Điểm hybrid retriever
+            h_rank = hybrid_rank.get(cid, 999)
+            score += max(0.0, 20.0 - h_rank * 0.5)
+
+            # 4. Thứ tự gốc từ LLM
+            score += 10.0 / (1.0 + orig_idx)
+
+            scored_ids.append((score, cid))
+
+        scored_ids.sort(key=lambda item: (-item[0], item[1]))
+        return [cid for _, cid in scored_ids]
+
+    @staticmethod
+    def _prioritize_sibling_extras(
+        core_ids: list[int],
+        llm_extra_ids: list[int],
+        candidates: list[Document],
+        hybrid_ids: list[int],
+        limit: int = 5,
+    ) -> list[int]:
+        """Ưu tiên các đoạn anh em (cùng CLB và chủ đề) của CORE_IDS cho EXTRA_IDS."""
+        doc_map = {d.id: d for d in candidates}
+        hybrid_rank = {doc_id: rank for rank, doc_id in enumerate(hybrid_ids)}
+        core_set = set(core_ids)
+
+        # 1. Tìm các đoạn anh em (cùng club và cùng topic với bất kỳ core_id nào)
+        sibling_candidates: list[int] = []
+        for cid in core_ids:
+            if cid not in doc_map:
+                continue
+            cdoc = doc_map[cid]
+            for doc in candidates:
+                if (
+                    doc.id != cid
+                    and doc.id not in core_set
+                    and doc.id not in sibling_candidates
+                    and doc.club == cdoc.club
+                    and doc.topic == cdoc.topic
+                ):
+                    sibling_candidates.append(doc.id)
+
+        # Sắp xếp các đoạn anh em theo thứ tự hybrid rank
+        sibling_candidates.sort(key=lambda did: hybrid_rank.get(did, 999))
+
+        # 2. Ghép thứ tự EXTRA_IDS: Anh em trước -> Gợi ý LLM -> Các ứng viên điểm cao còn lại
+        extras: list[int] = []
+        for did in [*sibling_candidates, *llm_extra_ids, *hybrid_ids]:
+            if did in doc_map and did not in core_set and did not in extras:
+                extras.append(did)
+                if len(extras) >= limit:
+                    break
+        return extras
+
     def select(
         self,
         plan: QueryPlan,
@@ -575,9 +730,15 @@ class EvidenceSelector:
     ) -> EvidenceDecision:
         if not candidates:
             return EvidenceDecision("UNANSWERABLE", [], [])
+
+        doc_map = {doc.id: doc for doc in candidates}
+        hybrid_rank = {doc_id: rank for rank, doc_id in enumerate(hybrid_ids)}
+
         if self.llm is None:
             fallback = hybrid_ids[: min(4, len(hybrid_ids))]
-            return EvidenceDecision("ANSWERABLE", fallback, hybrid_ids[len(fallback) : 8])
+            core = self._rerank_core_ids(fallback, doc_map, plan, hybrid_rank)
+            extras = self._prioritize_sibling_extras(core, [], candidates, hybrid_ids, limit=5)
+            return EvidenceDecision("ANSWERABLE", core, extras)
 
         valid_ids = {doc.id for doc in candidates}
         candidate_text = "\n\n".join(format_doc_block(doc) for doc in candidates)
@@ -590,10 +751,12 @@ class EvidenceSelector:
             raw = self.llm.chat([{"role": "user", "content": prompt}], model=self.model)
         except Exception as exc:  # pragma: no cover - phụ thuộc gateway
             fallback = hybrid_ids[: min(4, len(hybrid_ids))]
+            core = self._rerank_core_ids(fallback, doc_map, plan, hybrid_rank)
+            extras = self._prioritize_sibling_extras(core, [], candidates, hybrid_ids, limit=5)
             return EvidenceDecision(
                 "ANSWERABLE",
-                fallback,
-                hybrid_ids[len(fallback) : 8],
+                core,
+                extras,
                 raw_output=f"ERROR {type(exc).__name__}: {exc}",
             )
 
@@ -605,17 +768,31 @@ class EvidenceSelector:
         if not status_match and not core_match:
             legacy_ids = _parse_id_list(raw, valid_ids, self.max_core_ids)
             core = legacy_ids or hybrid_ids[: min(3, len(hybrid_ids))]
-            return EvidenceDecision("ANSWERABLE", core, [], raw_output=raw)
+            core = self._rerank_core_ids(core, doc_map, plan, hybrid_rank)
+            extras = self._prioritize_sibling_extras(core, [], candidates, hybrid_ids, limit=5)
+            return EvidenceDecision("ANSWERABLE", core, extras, raw_output=raw)
 
         status = status_match.group(1).upper() if status_match else "ANSWERABLE"
         core_ids = (
             _parse_id_list(core_match.group(1), valid_ids, self.max_core_ids) if core_match else []
         )
-        extra_ids = _parse_id_list(extra_match.group(1), valid_ids, 5) if extra_match else []
-        extra_ids = [i for i in extra_ids if i not in core_ids]
+        llm_extra_ids = _parse_id_list(extra_match.group(1), valid_ids, 5) if extra_match else []
+        llm_extra_ids = [i for i in llm_extra_ids if i not in core_ids]
 
         if status != "UNANSWERABLE" and not core_ids:
             core_ids = [doc.id for doc in candidates[: min(4, len(candidates))]]
+
+        # 1. Sắp xếp lại nội bộ CORE_IDS: đưa đoạn trực tiếp nhất lên rank 1
+        core_ids = self._rerank_core_ids(core_ids, doc_map, plan, hybrid_rank)
+
+        # 2. Ưu tiên đoạn anh em cho EXTRA_IDS
+        extra_ids = self._prioritize_sibling_extras(
+            core_ids=core_ids,
+            llm_extra_ids=llm_extra_ids,
+            candidates=candidates,
+            hybrid_ids=hybrid_ids,
+            limit=5,
+        )
 
         return EvidenceDecision(
             status=status,
@@ -756,10 +933,10 @@ class NeoRAGPipeline(RAGPipeline):
         whole_texts = [format_passage_dense_text(doc) for doc in self.documents]
         whole_dense = self._make_dense_index().fit(whole_texts, name="whole_passages_v2")
 
-        # 2. Smart-Unit Embeddings: hỗ trợ bắt chi tiết nhỏ trong các đoạn liệt kê dài.
+        # 2. Smart-Unit Embeddings: hỗ trợ bắt chi tiết nhỏ trong các đoạn liệt kê dài (định dạng [CLB | Topic]).
         units = build_smart_units(self.documents)
         unit_dense = self._make_dense_index().fit(
-            [unit.context for unit in units], name="smart_units_v2"
+            [unit.context for unit in units], name="smart_units_v3"
         )
 
         # 3. Dual BM25: cả có dấu + không dấu kèm bigram từ và bí danh CLB.
@@ -845,6 +1022,9 @@ class NeoRAGPipeline(RAGPipeline):
         if not retrieved_ids:
             retrieved_ids = [self.documents[0].id]
 
+        if plan.scope == "MULTI_CLUB":
+            retrieved_ids = self._ensure_multi_club_top5(retrieved_ids, candidates, plan)
+
         self.last_debug = {
             "query": query,
             "normalized_query": plan.normalized_query,
@@ -861,6 +1041,78 @@ class NeoRAGPipeline(RAGPipeline):
             "answer": answer,
         }
         return RAGOutput(answer=answer, retrieved_ids=retrieved_ids)
+
+    def _ensure_multi_club_top5(
+        self,
+        retrieved_ids: list[int],
+        candidates: list[Document],
+        plan: QueryPlan,
+    ) -> list[int]:
+        """Đảm bảo trong top-5 có đầy đủ đại diện của các CLB được so sánh."""
+        if plan.scope != "MULTI_CLUB":
+            return retrieved_ids
+
+        # Nhận diện các CLB mục tiêu được nhắc tới trong truy vấn
+        detected = [c for c in detect_clubs(plan.normalized_query) if c in MAIN_CLUBS]
+        target_clubs = detected if len(detected) >= 2 else list(MAIN_CLUBS)
+
+        top5 = retrieved_ids[:5]
+        top5_clubs = {self.doc_by_id[doc_id].club for doc_id in top5 if doc_id in self.doc_by_id}
+
+        missing_clubs = [c for c in target_clubs if c not in top5_clubs]
+        if not missing_clubs:
+            return retrieved_ids
+
+        insertions: list[int] = []
+        for club in missing_clubs:
+            found_id = None
+            for doc_id in retrieved_ids[5:]:
+                if self.doc_by_id.get(doc_id) and self.doc_by_id[doc_id].club == club:
+                    found_id = doc_id
+                    break
+            if found_id is None:
+                for doc in candidates:
+                    if doc.club == club and doc.id not in top5 and doc.id not in insertions:
+                        found_id = doc.id
+                        break
+            if found_id is not None and found_id not in insertions:
+                insertions.append(found_id)
+
+        if not insertions:
+            return retrieved_ids
+
+        head = list(top5)
+        rem = [i for i in retrieved_ids[5:] if i not in insertions]
+
+        for ins_id in insertions:
+            if len(head) >= 5:
+                # Tìm phần tử từ cuối top 5 có club đã xuất hiện ít nhất 2 lần trong head
+                club_counts: dict[str, int] = {}
+                for d_id in head:
+                    c = self.doc_by_id[d_id].club
+                    club_counts[c] = club_counts.get(c, 0) + 1
+
+                replace_idx = None
+                for idx in range(len(head) - 1, 1, -1):
+                    d_id = head[idx]
+                    c = self.doc_by_id[d_id].club
+                    if club_counts.get(c, 0) > 1:
+                        replace_idx = idx
+                        break
+                if replace_idx is not None:
+                    removed = head.pop(replace_idx)
+                    rem.insert(0, removed)
+                    head.append(ins_id)
+                else:
+                    head.append(ins_id)
+            else:
+                head.append(ins_id)
+
+        new_order: list[int] = []
+        for doc_id in [*head, *rem]:
+            if doc_id not in new_order:
+                new_order.append(doc_id)
+        return new_order[: self.config.max_retrieved]
 
 
 __all__ = [

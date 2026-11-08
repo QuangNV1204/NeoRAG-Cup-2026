@@ -156,4 +156,16 @@ def normalize01(values: np.ndarray) -> np.ndarray:
     return (values - low) / (high - low)
 
 
-__all__ = ["BM25Index", "DenseIndex", "normalize01"]
+def saturate_bm25(values: np.ndarray, k: float = 12.0) -> np.ndarray:
+    """Chuẩn hóa bão hòa điểm BM25: f(s) = max(s, 0) / (max(s, 0) + k).
+
+    Giúp triệt tiêu hiện tượng từ khóa đơn lẻ bị phóng đại quá mức khi min-max,
+    đồng thời giữ cho điểm sparse và dense có thang đo cân bằng, tương thích tốt với nhau.
+    """
+    arr = np.maximum(np.asarray(values, dtype=np.float32), 0.0)
+    if arr.size == 0:
+        return arr
+    return arr / (arr + k)
+
+
+__all__ = ["BM25Index", "DenseIndex", "normalize01", "saturate_bm25"]

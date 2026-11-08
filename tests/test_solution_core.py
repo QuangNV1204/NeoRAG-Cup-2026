@@ -57,6 +57,14 @@ def test_tech_tokens_and_sanitize_answer():
     )
     assert preserved.startswith("Theo Phòng truyền thống")
 
+    # Loại bỏ câu phân bua/rào đón tiêu cực ở cuối câu trả lời đầy đủ (ANSWERABLE)
+    hedged = (
+        "CLB Lập Trình PTIT dạy ngôn ngữ C trong vòng training để bám sát chương trình trên trường. "
+        "Tài liệu không so sánh trực tiếp với việc học Python."
+    )
+    cleaned_hedge = sanitize_answer(hedged, status="ANSWERABLE")
+    assert cleaned_hedge == "CLB Lập Trình PTIT dạy ngôn ngữ C trong vòng training để bám sát chương trình trên trường."
+
 
 def test_chunking_and_smart_units(corpus):
     chunks = build_chunks(corpus)
@@ -79,6 +87,7 @@ def test_chunking_and_smart_units(corpus):
     long_units = [u for u in units if u.doc_id == 58]
     assert len(long_units) >= 2
     assert all("giai đoạn 2022-2024" in u.text for u in long_units)
+    assert all(u.context.startswith(f"[{u.club} | {u.topic}] ") for u in units)
     assert format_passage_dense_text(corpus[0]).startswith("CLB Lập Trình PTIT — Giới thiệu:")
 
 
@@ -191,6 +200,18 @@ def test_neorag_pipeline_offline_end_to_end(corpus, tmp_path):
     assert 1 <= len(out_unans.retrieved_ids) <= 10
     assert pipeline.last_debug["status"] == "UNANSWERABLE"
 
+    # Kiểm tra đảm bảo độ phủ 3 CLB trong top 5 cho câu hỏi MULTI_CLUB
+    from neorag.solution.focused import QueryPlan
+
+    plan_multi = QueryPlan(
+        raw_query="So sánh 3 CLB",
+        normalized_query="So sánh 3 CLB ProPTIT, Multimedia và GCC",
+        scope="MULTI_CLUB",
+        search_queries=[("So sánh 3 CLB", 1.0)],
+    )
+    covered = pipeline._ensure_multi_club_top5([1, 2], corpus, plan_multi)
+    assert 3 in covered[:3]
+
 
 def test_pipeline_offline_end_to_end(corpus, tmp_path):
     config = SolutionConfig(
@@ -242,3 +263,68 @@ def test_cag_pipeline_offline_end_to_end(corpus, tmp_path):
     assert "CLB Lập Trình PTIT" in covered_clubs
     assert "CLB Multimedia PTIT" in covered_clubs
     assert "CLB Nhà Sáng Tạo Game PTIT (GCC)" in covered_clubs
+
+
+def test_evidence_selector_rerank_and_sibling_extras():
+    from neorag.solution.focused import EvidenceSelector, QueryPlan
+
+    doc1 = Document(64, "CLB Lập Trình PTIT", "Ban chủ nhiệm", "Ban chủ nhiệm nhiệm kỳ 2025-2026: Chủ nhiệm...")
+    doc2 = Document(65, "CLB Lập Trình PTIT", "Ban chủ nhiệm", "Ban chủ nhiệm nhiệm kỳ 2024-2025: Phó Chủ nhiệm...")
+    doc3 = Document(66, "CLB Lập Trình PTIT", "Ban chủ nhiệm", "Ban chủ nhiệm nhiệm kỳ 2021-2022: Chủ nhiệm...")
+    doc4 = Document(85, "CLB Multimedia PTIT", "Giới thiệu chung", "CLB Multimedia PTIT thành lập năm 2012.")
+
+    candidates = [doc1, doc2, doc3, doc4]
+    doc_map = {d.id: d for d in candidates}
+    hybrid_rank = {64: 0, 65: 1, 66: 2, 85: 3}
+
+    plan = QueryPlan(
+        raw_query="pho cn proptit nk 2024-2025 la ai",
+        normalized_query="Phó Chủ nhiệm CLB Lập Trình PTIT nhiệm kỳ 2024-2025 là ai",
+        scope="SINGLE",
+        search_queries=[("Phó Chủ nhiệm CLB Lập Trình PTIT 2024-2025", 1.0)],
+    )
+
+    # 1. Sắp xếp lại nội bộ CORE_IDS: đưa doc2 (2024-2025) lên trước doc1 (2025-2026)
+    reranked = EvidenceSelector._rerank_core_ids([64, 65], doc_map, plan, hybrid_rank)
+    assert reranked[0] == 65
+    assert reranked[1] == 64
+
+    # 2. Ưu tiên đoạn anh em cho EXTRA_IDS: doc3 (cùng Ban chủ nhiệm) được ưu tiên trước doc4 (Multimedia)
+    extras = EvidenceSelector._prioritize_sibling_extras(
+        core_ids=[65],
+        llm_extra_ids=[85],
+        candidates=candidates,
+        hybrid_ids=[64, 66, 85],
+        limit=3,
+    )
+    assert extras[0] == 64  # sibling cùng topic
+    assert extras[1] == 66  # sibling cùng topic
+    assert 85 in extras     # doc khác topic/CLB xếp sau
+
+
+def test_bm25_saturation_and_temporal_penalty():
+    import numpy as np
+
+    from neorag.solution.index import saturate_bm25
+    from neorag.solution.vietnamese import align_canonical_entities, parse_temporals
+
+    # BM25 Saturation: điểm bão hòa mượt, chặn bùng nổ
+    raw_scores = np.array([0.0, 1.2, 12.0, 60.0], dtype=np.float32)
+    saturated = saturate_bm25(raw_scores, k=12.0)
+    assert saturated[0] == 0.0
+    assert 0.05 < saturated[1] < 0.15  # 1.2 / 13.2 ~ 0.09
+    assert abs(saturated[2] - 0.5) < 1e-5  # 12 / 24 = 0.5
+    assert 0.8 < saturated[3] < 0.9   # 60 / 72 ~ 0.83
+
+    # Parse temporals
+    q_temp = parse_temporals("Chủ nhiệm nhiệm kỳ 2021-2022 và năm 2024")
+    assert (2021, 2022) in q_temp["ranges"]
+    assert {2021, 2022, 2024} <= q_temp["years"]
+
+    # Align canonical entities
+    raw_ans = "CLB Lập trình PTIT ở nk 2025 - 2026 mở đợt tuyển gen 14 vào t8/2026."
+    canonical = align_canonical_entities(raw_ans)
+    assert "CLB Lập Trình PTIT" in canonical
+    assert "nhiệm kỳ 2025-2026" in canonical
+    assert "Gen 14" in canonical
+    assert "tháng 8/2026" in canonical

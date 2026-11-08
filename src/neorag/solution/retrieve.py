@@ -12,7 +12,7 @@ from neorag.llm import LLMClient
 from neorag.solution.config import SolutionConfig
 from neorag.solution.corpus import Chunk
 from neorag.solution.graph import KnowledgeGraph
-from neorag.solution.index import BM25Index, DenseIndex, normalize01
+from neorag.solution.index import BM25Index, DenseIndex, normalize01, saturate_bm25
 from neorag.solution.query import QueryAnalysis, SearchQuery
 from neorag.solution.vietnamese import MAIN_CLUBS, ascii_text, topic_labels
 
@@ -98,7 +98,7 @@ class HybridRetriever:
         if search_query.kind == "hyde":
             # HyDE là đoạn văn dài sinh tự động: chỉ dùng dense để tránh BM25 bị loãng.
             return dense_scores * search_query.weight
-        sparse_scores = normalize01(self.bm25.scores(search_query.text))
+        sparse_scores = saturate_bm25(self.bm25.scores(search_query.text))
         weights = self.config.dense_weight + self.config.sparse_weight
         fused = (
             self.config.dense_weight * dense_scores + self.config.sparse_weight * sparse_scores

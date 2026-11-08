@@ -33,6 +33,15 @@ def _make_context(club: str, topic: str, text: str) -> str:
     return f"{club} — {topic}. {text}"
 
 
+def format_smart_unit_context(club: str, topic: str, text: str) -> str:
+    """Định dạng context cho Smart Unit với cú pháp [CLB | Topic] tường minh.
+
+    Ngăn chặn việc các mệnh đề con ngắn (như 'học C, C++', 'tuyển thành viên')
+    bị max-pooling bắt nhầm sang CLB khác khi nhúng unit_dense.
+    """
+    return f"[{club} | {topic}] {text.strip()}"
+
+
 def format_passage_dense_text(doc: Document) -> str:
     """Văn bản nguyên đoạn dùng cho Whole-Passage Dense Embedding (bge-m3).
 
@@ -127,7 +136,7 @@ def build_smart_units(documents: list[Document], max_sentence_chars: int = 260) 
                         id=f"u:{doc.id}:{pos}:{window}",
                         doc_id=doc.id,
                         text=clean,
-                        context=_make_context(doc.club, doc.topic, clean),
+                        context=format_smart_unit_context(doc.club, doc.topic, clean),
                         club=doc.club,
                         topic=doc.topic,
                         position=pos,
@@ -193,5 +202,6 @@ __all__ = [
     "fingerprint",
     "format_passage_bm25_text",
     "format_passage_dense_text",
+    "format_smart_unit_context",
     "group_chunks_by_doc",
 ]
