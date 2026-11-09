@@ -19,7 +19,6 @@ from neorag.solution.query import QueryAnalyzer, QueryExpander
 from neorag.solution.retrieve import HybridRetriever
 from neorag.solution.vietnamese import ascii_content_words_raw
 
-
 class RAGAnythingPipeline(RAGPipeline):
     def __init__(
         self,
@@ -116,6 +115,5 @@ class RAGAnythingPipeline(RAGPipeline):
             "answer": answer,
         }
         return RAGOutput(answer=answer, retrieved_ids=retrieved_ids)
-
 
 __all__ = ["CAGPipeline", "NeoRAGPipeline", "RAGAnythingPipeline"]

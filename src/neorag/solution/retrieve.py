@@ -1,5 +1,3 @@
-"""Truy xuất hybrid: dense chunk + BM25, fuse nhiều truy vấn, phủ CLB và graph context."""
-
 from __future__ import annotations
 
 import re
@@ -32,7 +30,6 @@ _RERANK_LINE = re.compile(
 _RERANK_CLEAN = re.compile(r"^[\s\d,\[\]\-]+$")
 _RERANK_NUMBERS = re.compile(r"\d+")
 
-
 @dataclass
 class RetrievalResult:
     documents: list[Document]
@@ -41,17 +38,7 @@ class RetrievalResult:
     analysis: QueryAnalysis
     graph_ids: list[int]
 
-
 class HybridRetriever:
-    """Retriever RAG-Anything-style, tinh gọn cho văn bản.
-
-    - Dense: embed từng chunk câu/cửa sổ câu, quy về passage bằng trung bình top-2 chunk.
-    - Sparse: BM25 trên dạng bỏ dấu để xử lý câu hỏi không dấu/viết tắt.
-    - Multi-query: fuse `max + mean` trên câu hỏi gốc + các truy vấn LLM/CLB mở rộng.
-    - Rerank: một call LLM xem lại top ứng viên trước khi chốt thứ hạng.
-    - Coverage: với câu hỏi nhiều CLB, bảo đảm mỗi CLB có đại diện trong top-5.
-    - Graph: nối thêm passage lân cận ở cuối danh sách để làm giàu ngữ cảnh.
-    """
 
     def __init__(
         self,
@@ -96,7 +83,6 @@ class HybridRetriever:
     def _score_search_query(self, search_query: SearchQuery) -> np.ndarray:
         dense_scores = normalize01(self._dense_doc_scores(search_query.text))
         if search_query.kind == "hyde":
-            # HyDE là đoạn văn dài sinh tự động: chỉ dùng dense để tránh BM25 bị loãng.
             return dense_scores * search_query.weight
         sparse_scores = saturate_bm25(self.bm25.scores(search_query.text))
         weights = self.config.dense_weight + self.config.sparse_weight
@@ -140,7 +126,6 @@ class HybridRetriever:
         query: str,
         order: list[int],
     ) -> list[int]:
-        """Dùng LLM xem lại top ứng viên; fallback về thứ hạng hybrid nếu lỗi."""
         if not self.config.use_llm_rerank or self.llm is None or len(order) <= 3:
             return order
 
@@ -162,7 +147,7 @@ class HybridRetriever:
         )
         try:
             raw = self.llm.chat([{"role": "user", "content": prompt}], model=self.config.llm_model)
-        except Exception:  # pragma: no cover - phụ thuộc gateway
+        except Exception:
             return order
 
         selected: list[int] = []
@@ -186,7 +171,6 @@ class HybridRetriever:
             if len(selected) >= limit:
                 break
 
-        # Cần đủ tín hiệu mới thay đổi thứ hạng; nếu LLM trả về ít ID thì giữ hybrid.
         if len(selected) < min(3, len(candidates)):
             return order
         selected_set = set(selected)
@@ -203,8 +187,6 @@ class HybridRetriever:
         score_matrix = np.stack([self._score_search_query(q) for q in search_queries])
         scores = score_matrix.max(axis=0)
         if self.config.query_fusion_mean_weight:
-            # Kết hợp max với trung bình để câu hỏi nhiều ý vẫn giữ được tín hiệu
-            # từ các truy vấn phụ, thay vì chỉ phụ thuộc vào một truy vấn mạnh nhất.
             scores = scores + self.config.query_fusion_mean_weight * score_matrix.mean(axis=0)
 
         if self.config.club_boost and analysis.clubs:
@@ -239,7 +221,6 @@ class HybridRetriever:
                 if len(graph_ids) >= self.config.graph_context_docs:
                     break
 
-        # Điền thêm từ ranking gốc nếu graph không trả về đủ.
         for index in order:
             if len(selected) >= self.config.max_retrieved:
                 break
@@ -257,6 +238,5 @@ class HybridRetriever:
             analysis=analysis,
             graph_ids=graph_ids,
         )
-
 
 __all__ = ["HybridRetriever", "RetrievalResult"]

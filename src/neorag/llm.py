@@ -1,9 +1,3 @@
-"""Client LLM dùng chuẩn OpenAI-compatible, kèm cache SQLite tùy chọn.
-
-Trong cuộc thi, client trỏ tới gateway của BTC (https://proptit.dekthe.dev/v1),
-nơi phục vụ model `claude-haiku-5-5` (chat) và `bge-m3` (embedding, dùng cho judge).
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -16,7 +10,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
-
 
 class _Cache:
     def __init__(self, path: str | Path):
@@ -35,13 +28,10 @@ class _Cache:
             self._conn.execute("INSERT OR REPLACE INTO cache VALUES (?, ?)", (key, value))
             self._conn.commit()
 
-
 def _key(*parts: object) -> str:
     return hashlib.sha256(json.dumps(parts, ensure_ascii=False).encode()).hexdigest()
 
-
 class LLMClient:
-    """Bọc `openai.OpenAI` cho thao tác chat và embedding."""
 
     def __init__(
         self,
@@ -62,11 +52,10 @@ class LLMClient:
         self._cache = _Cache(cache_path) if cache_path else None
         self._endpoint = str(
             self._client.base_url
-        )  # đưa vào khóa cache: đổi provider thì không dùng lại
+        )
 
     @classmethod
     def for_judge(cls, cache_path: str | Path | None = None) -> LLMClient:
-        """Client cho bộ chấm: ưu tiên JUDGE_*, nếu trống thì dùng OPENAI_*."""
         return cls(
             api_key=os.getenv("JUDGE_API_KEY") or None,
             base_url=os.getenv("JUDGE_BASE_URL") or None,
@@ -74,7 +63,6 @@ class LLMClient:
         )
 
     def chat(self, messages: list[dict], model: str, temperature: float | None = None) -> str:
-        """`temperature=None` thì không gửi tham số này (claude-haiku-5-5 chỉ nhận giá trị mặc định)."""
         key = _key("chat", self._endpoint, model, temperature, messages)
         if self._cache and (hit := self._cache.get(key)) is not None:
             return hit

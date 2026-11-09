@@ -1,13 +1,3 @@
-"""Knowledge graph nhẹ, không cần LLM.
-
-RAG-Anything dùng graph thực thể – quan hệ để nối các mảnh thông tin rời rạc. Với corpus
-văn bản nhỏ của cuộc thi, một graph từ khóa/thực thể có trọng số IDF là đủ và không tốn
-budget. Graph được dùng để:
-- mở rộng ngữ cảnh ở cuối danh sách retrieval (không làm nhiễu top-5);
-- giải thích vì sao hai passage liên quan;
-- hỗ trợ câu hỏi nhiều đoạn / nhiều CLB.
-"""
-
 from __future__ import annotations
 
 import math
@@ -52,9 +42,7 @@ _ENTITY_STOP = {
     "phai",
 }
 
-
 def extract_entities(text: str) -> set[str]:
-    """Trích thực thể có thể so khớp chính xác: ngày, năm, URL, viết tắt, cụm danh từ."""
 
     entities: set[str] = set()
     for regex in (_DATE, _YEAR, _URL):
@@ -71,13 +59,11 @@ def extract_entities(text: str) -> set[str]:
             entities.add(" ".join(words))
     return {e for e in entities if e}
 
-
 def _doc_terms(doc: Document) -> set[str]:
     text = f"{doc.club} {doc.topic} {doc.text}"
     terms = set(content_words(text, ascii_only=True))
     terms.update(extract_entities(text))
     return {t for t in terms if len(t) > 1}
-
 
 @dataclass(frozen=True)
 class GraphEdge:
@@ -85,9 +71,7 @@ class GraphEdge:
     score: float
     shared: tuple[str, ...]
 
-
 class KnowledgeGraph:
-    """Graph hai tầng: passage ↔ term/entity, kèm cạnh passage ↔ passage."""
 
     def __init__(self, documents: list[Document], chunks: list[Chunk] | None = None):
         self.documents = documents
@@ -101,7 +85,6 @@ class KnowledgeGraph:
         for terms in self.terms_by_doc.values():
             df.update(terms)
         n_docs = max(1, len(documents))
-        # Từ quá phổ biến (ví dụ "ptit", "clb") không tạo ra tín hiệu phân biệt.
         self.term_df = df
         self.term_idf = {
             term: math.log(1.0 + (n_docs - freq + 0.5) / (freq + 0.5)) for term, freq in df.items()
@@ -144,7 +127,6 @@ class KnowledgeGraph:
             ]
 
     def related(self, doc_ids: list[int], limit: int = 2) -> list[tuple[int, float]]:
-        """Trả về passage lân cận của một nhóm passage, ưu tiên passage bổ sung thông tin."""
 
         seed = set(doc_ids)
         aggregate: dict[int, float] = defaultdict(float)
@@ -161,7 +143,6 @@ class KnowledgeGraph:
             doc = self.by_id.get(other_id)
             if doc is None:
                 continue
-            # Ưu tiên nhẹ passage khác chủ đề/CLB để tăng độ phủ ngữ cảnh.
             bonus = 0.08 if doc.topic not in seed_topics else 0.0
             bonus += 0.04 if doc.club not in seed_clubs else 0.0
             ranked.append((other_id, score * (1.0 + bonus)))
@@ -179,6 +160,5 @@ class KnowledgeGraph:
             "terms": len(self.term_df),
             "edges": sum(len(v) for v in self.neighbors.values()),
         }
-
 
 __all__ = ["GraphEdge", "KnowledgeGraph", "extract_entities"]
