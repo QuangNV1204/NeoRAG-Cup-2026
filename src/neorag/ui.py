@@ -1,5 +1,3 @@
-"""Hiển thị trên terminal cho lệnh `neorag`: tiêu đề, các bước có spinner, thanh tiến độ, bảng."""
-
 from __future__ import annotations
 
 import time
@@ -22,15 +20,13 @@ from rich.table import Table
 
 console = Console(highlight=False)
 
-STEP_WIDTH = 44  # độ rộng cột tên bước, để thời gian các bước thẳng hàng
-
+STEP_WIDTH = 44
 
 def fmt_duration(seconds: float) -> str:
     if seconds < 60:
         return f"{seconds:.1f}s"
     minutes, secs = divmod(int(round(seconds)), 60)
     return f"{minutes}m{secs:02d}s"
-
 
 def header(title: str, rows: list[tuple[str, str]]) -> None:
     grid = Table.grid(padding=(0, 2))
@@ -52,9 +48,7 @@ def header(title: str, rows: list[tuple[str, str]]) -> None:
     )
     console.print()
 
-
 class Step:
-    """Một bước đang chạy. Gán `detail` để ghi thêm thông tin vào dòng kết quả."""
 
     def __init__(self, label: str):
         self.label = label
@@ -69,13 +63,8 @@ class Step:
     def fail(self) -> None:
         console.print(f" [red]✗[/] {self.label}")
 
-
 @contextmanager
 def step(label: str, spinner: bool = True) -> Iterator[Step]:
-    """Chạy một bước: hiện spinner khi đang chạy, in ✓ kèm thời gian khi xong, ✗ khi lỗi.
-
-    `spinner=False` khi bên trong tự in ra màn hình (ví dụ thanh tải model của Hugging Face).
-    """
     s = Step(label)
     try:
         if spinner:
@@ -89,9 +78,7 @@ def step(label: str, spinner: bool = True) -> Iterator[Step]:
         raise
     s.done()
 
-
 def progress() -> Progress:
-    """Thanh tiến độ dùng chung; tự biến mất khi xong để chỉ còn dòng ✓."""
     return Progress(
         SpinnerColumn(style="cyan"),
         TextColumn("{task.description}"),
@@ -105,14 +92,11 @@ def progress() -> Progress:
         transient=True,
     )
 
-
 def note(text: str) -> None:
     console.print(f"   [dim]{text}[/]")
 
-
 def warn(text: str) -> None:
     console.print(f"   [yellow]![/] [yellow]{text}[/]")
-
 
 def error(title: str, message: str, hint: str | None = None) -> None:
     body = message if not hint else f"{message}\n\n[dim]{hint}[/]"

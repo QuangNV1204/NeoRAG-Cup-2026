@@ -1,20 +1,3 @@
-"""Cache-Augmented Generation (CAG): đưa TOÀN BỘ corpus vào prompt có prompt-caching.
-
-Corpus chỉ có 118 passage (~29K token), nên thay vì chỉ cho LLM xem top-k passage do
-retriever chọn, pipeline này cho `claude-haiku-5-5` đọc toàn bộ corpus trong system prompt
-(được đánh dấu `cache_control` để gateway/Anthropic cache, lần gọi sau chỉ tốn ~10% giá
-input). LLM vừa đóng vai retriever (chọn và xếp hạng id passage cần dùng) vừa trả lời.
-
-Luồng:
-    1. Hybrid retriever (dense bge-m3 + BM25, không gọi LLM) xếp hạng toàn bộ passage
-       — dùng làm gợi ý cho LLM và để điền phần đuôi của `retrieved_ids`.
-    2. Lượt "chọn + trả lời": LLM đọc toàn bộ corpus + few-shot từ tập train, trả về
-       danh sách id cần thiết (xếp theo mức quan trọng) và câu trả lời ngắn.
-    3. (tùy chọn) Lượt "viết lại": chỉ đưa các passage đã chọn, LLM kiểm tra và viết lại
-       câu trả lời bám sát nguyên văn passage.
-    4. `retrieved_ids` = id do LLM chọn → bổ sung từ hybrid ranking cho đủ 10.
-"""
-
 from __future__ import annotations
 
 import json
@@ -89,24 +72,21 @@ _ANSWER_LINE = re.compile(
 )
 _NUMBERS = re.compile(r"\d+")
 
-# Few-shot cố định từ tập train (bao quát trọn vẹn mọi dạng câu hỏi của cuộc thi).
 FEWSHOT_IDS = (
-    "train-0001",  # trực tiếp: súc tích, đi thẳng vào đáp án
-    "train-0002",  # không dấu/viết tắt: mở đầu bằng Có., giữ nguyên handle/link
-    "train-0005",  # diễn đạt khác, câu hỏi có/không: mở đầu bằng Không.
-    "train-0003",  # nhiều đoạn: lộ trình đào tạo, giữ đúng số tháng, tên cuộc thi
-    "train-0017",  # so sánh 3 CLB: ngày thành lập, tuổi CLB
-    "train-0024",  # thời gian: số năm thành lập tính đến mốc thời gian
-    "train-0027",  # thiếu dữ liệu: trả lời phần có, nói rõ phần không có
-    "train-0019",  # không có đáp án hoàn toàn: ID để trống, từ chối rõ ràng
-    "train-0044",  # so sánh 3 CLB toàn diện: chọn đủ ID cả 3 CLB
-    "train-0049",  # không có đáp án nhưng có đoạn liên quan: nêu đoạn liên quan và từ chối
+    "train-0001",
+    "train-0002",
+    "train-0005",
+    "train-0003",
+    "train-0017",
+    "train-0024",
+    "train-0027",
+    "train-0019",
+    "train-0044",
+    "train-0049",
 )
-
 
 def _format_doc(doc: Document) -> str:
     return f"[{doc.id}] {doc.club} — {doc.topic}\n{doc.text}"
-
 
 def load_fewshot(ids: tuple[str, ...], limit: int) -> list[dict]:
     path = DATA_DIR / "train" / "questions.jsonl"
@@ -120,7 +100,6 @@ def load_fewshot(ids: tuple[str, ...], limit: int) -> list[dict]:
                 rows[row["id"]] = row
     return [rows[i] for i in ids if i in rows][:limit]
 
-
 def parse_response(raw: str) -> tuple[list[int], str]:
     ids: list[int] = []
     if match := _ID_LINE.search(raw):
@@ -129,10 +108,8 @@ def parse_response(raw: str) -> tuple[list[int], str]:
     if match := _ANSWER_LINE.search(raw):
         answer = raw[match.end() :]
     elif ids:
-        # Không có nhãn TRẢ LỜI: bỏ dòng ID, phần còn lại là câu trả lời.
         answer = _ID_LINE.sub("", raw)
     ans = clean_answer(answer)
-    # Loại bỏ các tiền tố dẫn dắt thường làm giảm ROUGE-L và Noise Sensitivity
     boilerplate_prefixes = (
         "Theo tài liệu,",
         "Theo tài liệu",
@@ -168,7 +145,6 @@ def parse_response(raw: str) -> tuple[list[int], str]:
                 ans = ans[0].upper() + ans[1:]
     return ids, clean_answer(ans)
 
-
 class CAGPipeline(RAGPipeline):
     def __init__(
         self,
@@ -178,7 +154,6 @@ class CAGPipeline(RAGPipeline):
         **_: Any,
     ):
         base = config or SolutionConfig()
-        # Hybrid ranking chỉ làm gợi ý/điền đuôi: không gọi LLM ở bước này.
         self.config = replace(base, use_llm_rerank=False, use_graph_context=False)
         self.config.ensure_dirs()
         self.llm = llm or LLMClient(cache_path=self.config.cache_dir / "llm.sqlite")
@@ -199,7 +174,6 @@ class CAGPipeline(RAGPipeline):
         self.last_debug: dict[str, Any] = {}
         self.debug_by_query: dict[str, dict[str, Any]] = {}
 
-    # ------------------------------------------------------------------ index
     def _embed(self, texts: list[str]) -> np.ndarray:
         if self.embedder is not None:
             vectors = self.embedder.embed(texts)
@@ -250,7 +224,6 @@ class CAGPipeline(RAGPipeline):
             parts.append("VÍ DỤ CÁCH TRẢ LỜI:\n\n" + "\n\n".join(rows))
         return "\n\n".join(parts)
 
-    # -------------------------------------------------------------------- run
     def _system_message(self) -> dict:
         return {
             "role": "system",
@@ -307,7 +280,7 @@ class CAGPipeline(RAGPipeline):
             out = clean_answer(
                 self.llm.chat([{"role": "user", "content": prompt}], model=self.config.llm_model)
             )
-        except Exception:  # pragma: no cover - phụ thuộc gateway
+        except Exception:
             return draft
         return out or draft
 
@@ -347,7 +320,7 @@ class CAGPipeline(RAGPipeline):
         raw = ""
         try:
             llm_ids, answer, raw = self._select_and_answer(query, hybrid_ids, analysis)
-        except Exception as exc:  # pragma: no cover - phụ thuộc gateway
+        except Exception as exc:
             llm_ids, answer = [], ""
             raw = f"ERROR {type(exc).__name__}: {exc}"
         if self.use_rewrite and answer:
@@ -376,6 +349,5 @@ class CAGPipeline(RAGPipeline):
         }
         self.debug_by_query[query] = self.last_debug
         return RAGOutput(answer=clean_answer(answer, max_chars=2000), retrieved_ids=retrieved)
-
 
 __all__ = ["CAGPipeline", "FEWSHOT_IDS", "parse_response"]

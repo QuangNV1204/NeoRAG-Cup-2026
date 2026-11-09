@@ -12,14 +12,12 @@ import numpy as np
 
 EmbedFn = Callable[[list[str]], np.ndarray]
 
-
 def _normalize_rows(matrix: np.ndarray) -> np.ndarray:
     matrix = np.asarray(matrix, dtype=np.float32)
     if matrix.ndim == 1:
         matrix = matrix.reshape(1, -1)
     norms = np.linalg.norm(matrix, axis=1, keepdims=True)
     return matrix / np.maximum(norms, 1e-12)
-
 
 class DenseIndex:
     def __init__(
@@ -79,7 +77,6 @@ class DenseIndex:
             return np.zeros(0, dtype=np.float32)
         return np.asarray(self.matrix @ query_vector, dtype=np.float32)
 
-
 class BM25Index:
     def __init__(
         self,
@@ -127,7 +124,6 @@ class BM25Index:
             result[index] = score
         return result
 
-
 def normalize01(values: np.ndarray) -> np.ndarray:
     values = np.asarray(values, dtype=np.float32)
     if values.size == 0:
@@ -137,6 +133,5 @@ def normalize01(values: np.ndarray) -> np.ndarray:
     if high - low < 1e-9:
         return np.zeros_like(values)
     return (values - low) / (high - low)
-
 
 __all__ = ["BM25Index", "DenseIndex", "normalize01"]

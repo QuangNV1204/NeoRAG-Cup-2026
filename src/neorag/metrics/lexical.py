@@ -1,5 +1,3 @@
-"""Metric generation không cần LLM: String Presence, ROUGE-L, BLEU-4 (trên một câu hỏi)."""
-
 from __future__ import annotations
 
 import math
@@ -8,17 +6,10 @@ from collections import Counter
 
 from neorag.text import normalize, tokenize
 
-
 def _contains(text: str, phrase: str) -> bool:
-    """`phrase` xuất hiện trong `text` và không dính liền chữ/số hai bên ("3 tháng" ≠ "13 tháng")."""
     return re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text) is not None
 
-
 def string_presence(answer: str, key_facts: list[str]) -> float:
-    """Tỷ lệ key fact xuất hiện trong câu trả lời (so khớp chuỗi sau khi chuẩn hóa).
-
-    Một key fact có thể có nhiều cách viết, phân tách bằng " | ", ví dụ "09/10/2011 | 9/10/2011".
-    """
     if not key_facts:
         return 0.0
     text = normalize(answer)
@@ -27,7 +18,6 @@ def string_presence(answer: str, key_facts: list[str]) -> float:
         for fact in key_facts
     )
     return found / len(key_facts)
-
 
 def _lcs_length(a: list[str], b: list[str]) -> int:
     prev = [0] * (len(b) + 1)
@@ -38,9 +28,7 @@ def _lcs_length(a: list[str], b: list[str]) -> int:
         prev = cur
     return prev[-1]
 
-
 def rouge_l(answer: str, reference: str) -> float:
-    """ROUGE-L F1 trên token âm tiết."""
     cand, ref = tokenize(answer), tokenize(reference)
     if not cand or not ref:
         return 0.0
@@ -50,9 +38,7 @@ def rouge_l(answer: str, reference: str) -> float:
     p, r = lcs / len(cand), lcs / len(ref)
     return 2 * p * r / (p + r)
 
-
 def bleu4(answer: str, reference: str, epsilon: float = 0.1) -> float:
-    """Sentence BLEU-4 (trọng số đều 1-4 gram), làm trơn bằng epsilon cho n-gram bằng 0."""
     cand, ref = tokenize(answer), tokenize(reference)
     if not cand or not ref:
         return 0.0

@@ -14,7 +14,6 @@ from neorag.solution.vietnamese import (
     strip_diacritics,
 )
 
-
 def test_vietnamese_normalization_and_detection():
     assert strip_diacritics("CLB Đa phương tiện") == "CLB Da phuong tien"
     assert detect_clubs("CLB Lập Trình PTIT") == ["CLB Lập Trình PTIT"]
@@ -24,7 +23,6 @@ def test_vietnamese_normalization_and_detection():
     assert is_multi_club_question("So sánh ProPTIT và GCC") is True
     assert is_multi_club_question("ProPTIT thành lập ngày nào?") is False
 
-
 def test_chunking_uses_sentence_windows_and_parent_ids(corpus):
     chunks = build_chunks(corpus)
     assert len(chunks) >= len(corpus)
@@ -32,7 +30,6 @@ def test_chunking_uses_sentence_windows_and_parent_ids(corpus):
     for chunk in chunks:
         assert chunk.context.startswith(f"{chunk.club} — {chunk.topic}. ")
         assert chunk.doc_id in {d.id for d in corpus}
-
 
 def test_bm25_ascii_handles_accented_corpus():
     docs = [
@@ -44,7 +41,6 @@ def test_bm25_ascii_handles_accented_corpus():
     scores = index.scores("clb lap trinh ptit thanh lap ngay nao")
     assert int(scores.argmax()) == 0
     assert scores[0] > scores[1]
-
 
 def test_knowledge_graph_links_related_docs():
     docs = [
@@ -58,7 +54,6 @@ def test_knowledge_graph_links_related_docs():
     assert 1 not in related
     assert graph.summary()["documents"] == 3
 
-
 def test_query_analyzer_and_expander_are_deterministic_without_llm():
     config = SolutionConfig(use_query_expansion=False)
     analysis = QueryAnalyzer().analyze("So sánh ProPTIT và GCC")
@@ -71,9 +66,7 @@ def test_query_analyzer_and_expander_are_deterministic_without_llm():
     assert queries[0].text == analysis.query
     assert any(item.kind == "club" for item in queries)
 
-
 class _OfflineLLM:
-    """Trả lời cố định; đủ để kiểm tra luồng pipeline mà không gọi gateway."""
 
     def __init__(self):
         self.calls = []
@@ -86,7 +79,6 @@ class _OfflineLLM:
         if "BẮT BUỘC TRẢ VỀ ĐÚNG 2 PHẦN" in prompt or "NHIỆM VỤ:" in str(messages):
             return "ID: 1\nTRẢ LỜI: CLB Lập Trình PTIT được thành lập ngày 09/10/2011."
         return "CLB Lập Trình PTIT được thành lập ngày 09/10/2011."
-
 
 def test_pipeline_offline_end_to_end(corpus, tmp_path):
     config = SolutionConfig(
@@ -111,7 +103,6 @@ def test_pipeline_offline_end_to_end(corpus, tmp_path):
     assert pipeline.last_debug["search_queries"]
     assert pipeline.last_debug["retrieved_ids"] == output.retrieved_ids
 
-
 def test_cag_pipeline_offline_end_to_end(corpus, tmp_path):
     from conftest import FakeEmbedder
     from neorag.solution.cag import CAGPipeline
@@ -129,10 +120,7 @@ def test_cag_pipeline_offline_end_to_end(corpus, tmp_path):
     assert output.retrieved_ids[0] == 1
     assert len(output.retrieved_ids) <= 10
 
-    # Kiểm tra coverage câu hỏi so sánh 3 CLB
     doc_map = {d.id: d for d in corpus}
-    # Giả sử ban đầu retrieved chỉ có docs của ProPTIT (id 1, 2)
-    # _ensure_club_coverage phải kéo đại diện của MPC và GCC lên
     covered = pipeline._ensure_club_coverage(
         [1, 2],
         ["CLB Lập Trình PTIT", "CLB Multimedia PTIT", "CLB Nhà Sáng Tạo Game PTIT (GCC)"],

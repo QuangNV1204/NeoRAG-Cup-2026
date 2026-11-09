@@ -1,5 +1,3 @@
-"""Chuẩn hóa tiếng Việt, tách từ và nhận diện CLB dùng riêng cho pipeline giải pháp."""
-
 from __future__ import annotations
 
 import re
@@ -15,7 +13,6 @@ MAIN_CLUBS = [
 S2B_CLUB = "Cộng đồng S2B"
 ALL_CLUBS = [*MAIN_CLUBS, S2B_CLUB]
 
-# Từ dừng ở mức âm tiết. Không quá lớn để tránh mất từ khóa chuyên môn.
 STOPWORDS = frozenset(
     [
         "và",
@@ -349,7 +346,6 @@ _TOPIC_RULES: dict[str, tuple[str, ...]] = {
     ),
 }
 
-# Ánh xạ nhóm chủ đề nhận từ câu hỏi sang nhãn topic thật trong corpus.
 _TOPIC_GROUPS: dict[str, tuple[str, ...]] = {
     "Tuyển thành viên": ("Tuyển thành viên",),
     "Ban chủ nhiệm": ("Ban chủ nhiệm",),
@@ -371,56 +367,37 @@ _TOPIC_GROUPS: dict[str, tuple[str, ...]] = {
     "Sản phẩm": ("Sản phẩm", "Giải thưởng & sản phẩm"),
 }
 
-
 def strip_diacritics(text: str) -> str:
-    """Bỏ dấu tiếng Việt, xử lý cả chữ đ/Đ (NFD không tách được hai ký tự này)."""
     text = text.replace("đ", "d").replace("Đ", "D")
     return "".join(c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn")
-
 
 def ascii_text(text: str) -> str:
     return _SPACES.sub(" ", strip_diacritics(normalize(text))).strip()
 
-
 def words(text: str) -> list[str]:
     return tokenize(text)
-
 
 def ascii_words(text: str) -> list[str]:
     return ascii_text(text).split()
 
-
 def ascii_content_words_raw(text: str) -> list[str]:
-    """Tokenizer BM25 khớp với thiết kế thí nghiệm: NFC, bỏ dấu câu, bỏ dấu, lọc stopword.
-
-    Không thống nhất biến thể thanh điệu (oà/òa) để giữ đúng hành vi đã đo trên train.
-    """
     value = unicodedata.normalize("NFC", text).lower()
     value = _STRIP_PUNCT.sub(" ", value)
     value = strip_diacritics(value)
     return [word for word in value.split() if len(word) > 1 and word not in STOPWORDS]
 
-
 def content_words(text: str, ascii_only: bool = False) -> list[str]:
     tokens = ascii_words(text) if ascii_only else words(text)
     return [t for t in tokens if len(t) > 1 and t not in STOPWORDS]
-
 
 def char_ngrams(text: str, n: int = 3) -> list[str]:
     value = "_".join(ascii_words(text))
     return [value[i : i + n] for i in range(max(1, len(value) - n + 1))]
 
-
 def has_diacritics(text: str) -> bool:
     return ascii_text(text).replace(" ", "") != normalize(text).replace(" ", "")
 
-
 def detect_clubs(text: str) -> list[str]:
-    """Trả về các CLB được nhắc tới, theo thứ tự xuất hiện trong danh sách chuẩn.
-
-    So khớp theo ranh giới từ để các bí danh ngắn như "mm", "lt" không lọt vào
-    giữa một từ khác (ví dụ "comment").
-    """
     lowered = ascii_text(text)
     found: list[str] = []
     for club, aliases in _CLUB_ALIASES:
@@ -428,37 +405,29 @@ def detect_clubs(text: str) -> list[str]:
             found.append(club)
     return found
 
-
 def is_multi_club_question(text: str) -> bool:
     lowered = ascii_text(text)
     if any(marker in lowered for marker in _MULTI_MARKERS):
         return True
     return len([c for c in detect_clubs(text) if c in MAIN_CLUBS]) >= 2
 
-
 def is_founding_comparison(text: str) -> bool:
     lowered = ascii_text(text)
     founding = any(x in lowered for x in ("lau doi", "tre nhat", "thanh lap", "ra doi"))
     return founding and is_multi_club_question(text)
 
-
 def detect_topics(text: str) -> set[str]:
     lowered = ascii_text(text)
     return {topic for topic, keys in _TOPIC_RULES.items() if any(key in lowered for key in keys)}
 
-
 def topic_labels(topics: set[str]) -> set[str]:
-    """Đổi các nhóm chủ đề nhận từ câu hỏi thành nhãn topic có trong corpus."""
     labels: set[str] = set()
     for topic in topics:
         labels.update(_TOPIC_GROUPS.get(topic, ()))
     return labels
 
-
 def clean_answer(text: str, max_chars: int = 2000) -> str:
-    """Bỏ markdown/gạch đầu dòng, gộp thành đoạn văn để hợp với ROUGE-L và judge."""
     text = re.sub(r"\*\*|__|`", "", text)
-    # Bỏ mọi dạng trích dẫn ID như [12], [1, 2], (id: 12), (id: [1]), [id: 12]
     text = re.sub(r"\[\s*\d+(?:\s*,\s*\d+)*\s*\]", "", text)
     text = re.sub(r"\(?\s*id\s*[:：]?\s*\[?\d+(?:\s*,\s*\d+)*\]?\s*\)?", "", text, flags=re.I)
     lines = []
@@ -471,7 +440,6 @@ def clean_answer(text: str, max_chars: int = 2000) -> str:
         if answer.lower().startswith(prefix.lower()):
             answer = answer[len(prefix) :].strip()
     return answer[:max_chars]
-
 
 __all__ = [
     "ALL_CLUBS",
