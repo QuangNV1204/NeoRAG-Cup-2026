@@ -22,14 +22,12 @@ from neorag.solution.vietnamese import (
     strip_diacritics,
 )
 
-
 def test_vietnamese_normalization_and_detection():
     assert strip_diacritics("CLB Đa phương tiện") == "CLB Da phuong tien"
     assert detect_clubs("CLB Lập Trình PTIT") == ["CLB Lập Trình PTIT"]
     assert detect_clubs("clb lap trinh ptit") == ["CLB Lập Trình PTIT"]
     assert detect_clubs("MPC tuyển thành viên") == ["CLB Multimedia PTIT"]
     assert detect_clubs("GCC làm game") == ["CLB Nhà Sáng Tạo Game PTIT (GCC)"]
-    # "bên code" trong câu hỏi về GCC tuyệt đối không được nhận nhầm sang ProPTIT
     assert detect_clubs("o gcc ben code dong hon hay ben ve dong hon") == [
         "CLB Nhà Sáng Tạo Game PTIT (GCC)"
     ]
@@ -37,26 +35,22 @@ def test_vietnamese_normalization_and_detection():
     assert is_multi_club_question("So sánh ProPTIT và GCC") is True
     assert is_multi_club_question("ProPTIT thành lập ngày nào?") is False
 
-
 def test_tech_tokens_and_sanitize_answer():
     acc = accented_bm25_tokens("Học ngôn ngữ C, C++ và C# tại CLB.")
     asc = ascii_bm25_tokens("hoc ngon ngu c, c++ va c# tai clb")
     assert {"c", "cpp", "csharp"} <= set(acc)
     assert {"c", "cpp", "csharp"} <= set(asc)
 
-    # Bảo vệ abstention: gỡ tiền tố "Không." sai khi ngay sau đó nói tài liệu không có thông tin
     cleaned = sanitize_answer(
         "Không. Tài liệu hiện có không nêu phần mềm Premiere.",
         status="UNANSWERABLE",
     )
     assert cleaned == "Tài liệu hiện có không nêu phần mềm Premiere."
 
-    # Không cắt hỏng cụm "Theo Phòng truyền thống..." hoặc "Theo tài liệu hiện có..."
     preserved = sanitize_answer(
         "Theo Phòng truyền thống của CLB Lập Trình PTIT, Chủ nhiệm là Đàm Bá Quyền."
     )
     assert preserved.startswith("Theo Phòng truyền thống")
-
 
 def test_chunking_and_smart_units(corpus):
     chunks = build_chunks(corpus)
@@ -81,7 +75,6 @@ def test_chunking_and_smart_units(corpus):
     assert all("giai đoạn 2022-2024" in u.text for u in long_units)
     assert format_passage_dense_text(corpus[0]).startswith("CLB Lập Trình PTIT — Giới thiệu:")
 
-
 def test_bm25_ascii_handles_accented_corpus():
     docs = [
         "CLB Lập Trình PTIT được thành lập ngày 09/10/2011.",
@@ -92,7 +85,6 @@ def test_bm25_ascii_handles_accented_corpus():
     scores = index.scores("clb lap trinh ptit thanh lap ngay nao")
     assert int(scores.argmax()) == 0
     assert scores[0] > scores[1]
-
 
 def test_knowledge_graph_links_related_docs():
     docs = [
@@ -106,7 +98,6 @@ def test_knowledge_graph_links_related_docs():
     assert 1 not in related
     assert graph.summary()["documents"] == 3
 
-
 def test_query_analyzer_and_expander_are_deterministic_without_llm():
     config = SolutionConfig(use_query_expansion=False)
     analysis = QueryAnalyzer().analyze("So sánh ProPTIT và GCC")
@@ -119,9 +110,7 @@ def test_query_analyzer_and_expander_are_deterministic_without_llm():
     assert queries[0].text == analysis.query
     assert any(item.kind == "club" for item in queries)
 
-
 class _OfflineLLM:
-    """Trả lời cố định; đủ để kiểm tra luồng pipeline mà không gọi gateway."""
 
     def __init__(self):
         self.calls = []
@@ -163,7 +152,6 @@ class _OfflineLLM:
             return "ID: 1\nTRẢ LỜI: CLB Lập Trình PTIT được thành lập ngày 09/10/2011."
         return "CLB Lập Trình PTIT được thành lập ngày 09/10/2011."
 
-
 def test_neorag_pipeline_offline_end_to_end(corpus, tmp_path):
     from conftest import FakeEmbedder
     from neorag.pipelines.base import load_pipeline
@@ -191,7 +179,6 @@ def test_neorag_pipeline_offline_end_to_end(corpus, tmp_path):
     assert 1 <= len(out_unans.retrieved_ids) <= 10
     assert pipeline.last_debug["status"] == "UNANSWERABLE"
 
-
 def test_pipeline_offline_end_to_end(corpus, tmp_path):
     config = SolutionConfig(
         cache_dir=tmp_path / "cache",
@@ -214,7 +201,6 @@ def test_pipeline_offline_end_to_end(corpus, tmp_path):
     assert output.retrieved_ids[0] == 1
     assert pipeline.last_debug["search_queries"]
     assert pipeline.last_debug["retrieved_ids"] == output.retrieved_ids
-
 
 def test_cag_pipeline_offline_end_to_end(corpus, tmp_path):
     from conftest import FakeEmbedder

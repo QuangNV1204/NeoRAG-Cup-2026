@@ -1,5 +1,3 @@
-"""Tầng ingestion: biểu diễn nguyên đoạn văn (whole-passage) và đơn vị chi tiết giữ tiêu đề."""
-
 from __future__ import annotations
 
 import hashlib
@@ -14,10 +12,8 @@ _SENTENCE_END = re.compile(r"(?<=[.!?;…])\s+|\n+")
 _FULL_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+|\n+")
 _LIST_MARKER = re.compile(r"^\s*(?:\d+[.)]|[-*•+])\s+")
 
-
 @dataclass(frozen=True)
 class Chunk:
-    """Một đơn vị retrieval. `context` là văn bản thực sự được embed/index."""
 
     id: str
     doc_id: int
@@ -28,45 +24,30 @@ class Chunk:
     position: int
     window: int = 1
 
-
 def _make_context(club: str, topic: str, text: str) -> str:
     return f"{club} — {topic}. {text}"
 
-
 def format_passage_dense_text(doc: Document) -> str:
-    """Văn bản nguyên đoạn dùng cho Whole-Passage Dense Embedding (bge-m3).
-
-    Mỗi passage trong corpus chỉ dài 1-5 câu (~100-750 ký tự), nên embed nguyên đoạn
-    giữ trọn ngữ cảnh xuyên câu (ví dụ lưu ý 'chỉ áp dụng cho đợt tuyển năm 2026' ở cuối đoạn).
-    """
     return f"{doc.club} — {doc.topic}: {doc.text.strip()}"
 
-
 def format_passage_bm25_text(doc: Document) -> str:
-    """Văn bản nguyên đoạn dùng cho BM25, gắn thêm tên gọi phổ biến của CLB."""
     return f"{club_lexical_aliases(doc.club)} — {doc.topic}: {doc.text.strip()}"
 
-
 def split_sentences(text: str) -> list[str]:
-    """Tách câu theo dấu kết thúc và dấu chấm phẩy."""
     sentences: list[str] = []
     for line in text.splitlines():
         line = _LIST_MARKER.sub("", line).strip()
         sentences.extend(part.strip() for part in _SENTENCE_END.split(line) if part.strip())
     return [sentence for sentence in sentences if len(sentence) > 1]
 
-
 def _split_full_sentences(text: str) -> list[str]:
-    """Tách theo câu hoàn chỉnh (.!?), giữ nguyên dấu chấm phẩy bên trong câu ngắn."""
     sentences: list[str] = []
     for line in text.splitlines():
         line = _LIST_MARKER.sub("", line).strip()
         sentences.extend(part.strip() for part in _FULL_SENTENCE_END.split(line) if part.strip())
     return [sentence for sentence in sentences if len(sentence) > 1]
 
-
 def _split_long_semicolon_sentence(sentence: str, max_chars: int = 260) -> list[str]:
-    """Tách câu liệt kê dài bằng `;` nhưng giữ phần dẫn trước dấu `:` (như giai đoạn/nhiệm kỳ)."""
     if len(sentence) <= max_chars or ";" not in sentence:
         return [sentence]
 
@@ -90,15 +71,7 @@ def _split_long_semicolon_sentence(sentence: str, max_chars: int = 260) -> list[
         units.append(unit)
     return units
 
-
 def build_smart_units(documents: list[Document], max_sentence_chars: int = 260) -> list[Chunk]:
-    """Tạo các đơn vị con giữ nguyên ngữ cảnh tiêu đề để bổ trợ cho Whole-Passage Embedding.
-
-    - Đoạn ngắn 1 câu: giữ nguyên 1 đơn vị duy nhất.
-    - Đoạn nhiều câu: tạo đơn vị từng câu + cửa sổ 2 câu liền kề.
-    - Câu liệt kê dài (giải thưởng, Ban chủ nhiệm, nội quy...): tách theo cặp mệnh đề `;`
-      nhưng luôn giữ tiền tố giai đoạn/nhiệm kỳ trước dấu `:`.
-    """
     units: list[Chunk] = []
     for doc in documents:
         full_sentences = _split_full_sentences(doc.text)
@@ -137,9 +110,7 @@ def build_smart_units(documents: list[Document], max_sentence_chars: int = 260) 
                 pos += 1
     return units
 
-
 def build_chunks(documents: list[Document], max_window_chars: int = 1200) -> list[Chunk]:
-    """Tạo chunk một câu và cửa sổ hai câu liền kề (giữ tương thích ngược)."""
     chunks: list[Chunk] = []
     for doc in documents:
         sentences = split_sentences(doc.text)
@@ -171,20 +142,16 @@ def build_chunks(documents: list[Document], max_window_chars: int = 1200) -> lis
                 )
     return chunks
 
-
 def fingerprint(documents: list[Document], namespace: str = "") -> str:
-    """Hash ổn định của corpus để dùng làm khóa cache embedding."""
     payload = [[d.id, d.club, d.topic, d.text] for d in sorted(documents, key=lambda item: item.id)]
     raw = json.dumps([namespace, payload], ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
 
 def group_chunks_by_doc(chunks: list[Chunk]) -> dict[int, list[Chunk]]:
     grouped: dict[int, list[Chunk]] = {}
     for chunk in chunks:
         grouped.setdefault(chunk.doc_id, []).append(chunk)
     return grouped
-
 
 __all__ = [
     "Chunk",

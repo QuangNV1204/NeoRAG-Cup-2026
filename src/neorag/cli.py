@@ -1,5 +1,3 @@
-"""Dòng lệnh `neorag`: predict, validate, evaluate."""
-
 from __future__ import annotations
 
 import argparse
@@ -40,18 +38,14 @@ from neorag.ui import (
 
 MAX_ERRORS_SHOWN = 15
 
-
 def _path(p: str | Path) -> str:
-    """Đường dẫn ngắn gọn: tương đối với thư mục hiện tại nếu được."""
     path = Path(p)
     with contextlib.suppress(ValueError):
         path = path.resolve().relative_to(Path.cwd().resolve())
     return escape(str(path))
 
-
 def _gateway() -> str:
     return escape(os.getenv("OPENAI_BASE_URL") or "api.openai.com (mặc định)")
-
 
 def _show_errors(errors: list[str]) -> None:
     for e in errors[:MAX_ERRORS_SHOWN]:
@@ -59,17 +53,12 @@ def _show_errors(errors: list[str]) -> None:
     if len(errors) > MAX_ERRORS_SHOWN:
         note(f"... và {len(errors) - MAX_ERRORS_SHOWN} lỗi khác")
 
-
 def _check_gpu(device: str) -> None:
     from neorag.embeddings import gpu_unused
 
     if gpu_unused(device):
         warn("Máy có GPU NVIDIA nhưng PyTorch đang là bản CPU nên model chạy trên CPU.")
         warn("Cài lại để dùng GPU: python scripts/install.py --local")
-
-
-# ---------------------------------------------------------------- predict
-
 
 def _cmd_predict(args: argparse.Namespace) -> int:
     from neorag.embeddings import LocalEmbedder, is_downloaded
@@ -157,7 +146,7 @@ def _cmd_predict(args: argparse.Namespace) -> int:
 
     console.print()
     if getattr(args, "then_evaluate", False):
-        return 0  # `neorag run` tự chuyển sang bước chấm điểm
+        return 0
     has_gold = (DATA_DIR / args.split / "gold.jsonl").exists()
     if has_gold or all(q.has_ground_truth for q in queries):
         console.print("[dim]Bước tiếp theo, chấm điểm:[/]")
@@ -174,9 +163,7 @@ def _cmd_predict(args: argparse.Namespace) -> int:
     console.print()
     return 0
 
-
 def _cmd_run(args: argparse.Namespace) -> int:
-    """predict rồi evaluate ngay nếu có đáp án."""
     predict_args = argparse.Namespace(**vars(args), then_evaluate=True)
     if (code := _cmd_predict(predict_args)) != 0:
         return code
@@ -189,28 +176,19 @@ def _cmd_run(args: argparse.Namespace) -> int:
         console.print()
         return 0
     eval_args = argparse.Namespace(**vars(args))
-    eval_args.predictions, eval_args.out = args.out, None  # --out của run là file predictions
+    eval_args.predictions, eval_args.out = args.out, None
     return _cmd_evaluate(eval_args)
 
-
 def _submission_zip(predictions: Path) -> Path:
-    """outputs/public_test_pred.jsonl -> outputs/public_test_submission.zip"""
     stem = predictions.stem.removesuffix("_pred")
     return predictions.with_name(f"{stem}_submission.zip")
 
-
 def _write_submission_zip(predictions: Path) -> None:
-    """Codabench nhận bài nộp dạng .zip: nén sẵn file predictions để thí sinh chỉ việc upload."""
     with zipfile.ZipFile(_submission_zip(predictions), "w", zipfile.ZIP_DEFLATED) as z:
         z.write(predictions, predictions.name)
 
-
 def _done_line(label: str, seconds: float) -> None:
     console.print(f" [green]✓[/] {label:<{STEP_WIDTH}} [dim]{fmt_duration(seconds):>7}[/]")
-
-
-# ---------------------------------------------------------------- validate
-
 
 def _cmd_validate(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
@@ -232,9 +210,6 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     console.print()
     return 0
 
-
-# ---------------------------------------------------------------- evaluate
-
 _RETRIEVAL_COLS = [
     ("hit", "Hit"),
     ("precision", "Precision"),
@@ -253,7 +228,6 @@ _GENERATION_ROWS = [
     ("noise_sensitivity", "Noise Sensitivity", "↓", "tỉ lệ câu sai so với đáp án"),
     ("abstention", "Abstention", "↑", "từ chối đúng câu không có đáp án"),
 ]
-
 
 def _show_report(report, cfg: dict) -> None:
     m = report.metrics
@@ -332,7 +306,6 @@ def _show_report(report, cfg: dict) -> None:
             f"{s['generation_weight']} × Generation"
         )
 
-
 def _cmd_evaluate(args: argparse.Namespace) -> int:
     from neorag.evaluate import evaluate, save_report
     from neorag.llm import LLMClient
@@ -391,10 +364,6 @@ def _cmd_evaluate(args: argparse.Namespace) -> int:
     )
     console.print()
     return 0
-
-
-# ---------------------------------------------------------------- main
-
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="neorag", description="NeoRAG Cup 2026 toolkit")
@@ -455,21 +424,16 @@ def build_parser() -> argparse.ArgumentParser:
     r.set_defaults(func=_cmd_run)
     return parser
 
-
 def _first_existing(*paths: Path) -> Path:
     return next((p for p in paths if p.exists()), paths[0])
 
-
 def _split_name(split: str) -> str:
-    """public_test -> public_test; data/public_test/questions.jsonl -> public_test; my.jsonl -> my"""
     path = Path(split)
     if path.suffix != ".jsonl":
         return split
     return path.parent.name if path.name in ("questions.jsonl", "gold.jsonl") else path.stem
 
-
 SPLITS = ("train", "public_test", "private_test")
-
 
 def _missing_split(split: str) -> str:
     if split not in SPLITS:
@@ -482,15 +446,11 @@ def _missing_split(split: str) -> str:
         "thi khi giai đoạn mở; tải file về và đặt vào đúng đường dẫn này."
     )
 
-
 def _fill_defaults(args: argparse.Namespace) -> argparse.Namespace:
-    """Điền đường dẫn mặc định từ tên bộ câu hỏi: `neorag evaluate train` thay cho lệnh dài."""
     split = args.split
     if split.endswith(".jsonl"):
         questions = gold = Path(split)
     else:
-        # data/<bộ>/questions.jsonl: câu hỏi; data/<bộ>/gold.jsonl: đáp án Public/Private (chỉ BTC có).
-        # Tập train có đáp án ngay trong questions.jsonl.
         questions = DATA_DIR / split / "questions.jsonl"
         gold = _first_existing(DATA_DIR / split / "gold.jsonl", questions)
         needs_questions = any(getattr(args, n, "") is None for n in ("queries", "gold"))
@@ -504,14 +464,12 @@ def _fill_defaults(args: argparse.Namespace) -> argparse.Namespace:
         ("predictions", predictions),
     ):
         if name == "out" and args.command == "evaluate":
-            continue  # với evaluate, --out là thư mục báo cáo
+            continue
         if hasattr(args, name) and getattr(args, name) is None:
             setattr(args, name, default)
     return args
 
-
 def _api_error(e: Exception) -> tuple[str, str, str | None]:
-    """Đổi lỗi từ gateway thành thông báo dễ hiểu: (tiêu đề, nội dung, gợi ý)."""
     import openai
 
     body = getattr(e, "body", None)
@@ -538,7 +496,7 @@ def _api_error(e: Exception) -> tuple[str, str, str | None]:
             "Đợi khoảng một phút rồi chạy lại. Kết quả đã gọi được lưu trong cache.",
         )
     status = getattr(e, "status_code", None)
-    if status is None:  # lỗi phía client, thường là thiếu key
+    if status is None:
         return (
             "Chưa cấu hình API key",
             "Không tìm thấy OPENAI_API_KEY.",
@@ -546,9 +504,8 @@ def _api_error(e: Exception) -> tuple[str, str, str | None]:
         )
     return (f"Gateway trả về lỗi {status}", detail, None)
 
-
 def main(argv: list[str] | None = None) -> int:
-    for stream in (sys.stdout, sys.stderr):  # tiếng Việt trên console Windows
+    for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
     from dotenv import load_dotenv
@@ -571,7 +528,6 @@ def main(argv: list[str] | None = None) -> int:
             error(*_api_error(e))
             return 1
         raise
-
 
 if __name__ == "__main__":
     sys.exit(main())
