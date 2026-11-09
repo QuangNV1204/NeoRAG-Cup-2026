@@ -1,6 +1,3 @@
-"""Metric generation chấm bằng LLM judge: Groundedness, Noise Sensitivity, Response Relevancy,
-Abstention. Prompt nằm cố định trong file này để mọi thí sinh được chấm giống nhau."""
-
 from __future__ import annotations
 
 import math
@@ -51,28 +48,20 @@ Chỉ trả lời "1" nếu đạt, "0" nếu không đạt."""
 _LABEL_LINE = re.compile(r"^\s*(\d+)\s*[:.)\-–]\s*([a-z_]+)", re.MULTILINE)
 _LIST_PREFIX = re.compile(r"^\s*(?:\d+\s*[.)]|[-*•+])\s*")
 
-
 def _plain(reply: str) -> str:
-    """Bỏ định dạng markdown judge hay tự thêm (**nhãn**, `nhãn`)."""
     return re.sub(r"[*`_]{2,}|[*`]", "", reply).lower()
-
 
 _TAG = re.compile(r"</?\s*cau_tra_loi\s*>", re.IGNORECASE)
 
-
 def _clean(answer: str) -> str:
-    """Bỏ thẻ <cau_tra_loi> trong câu trả lời để không thể "thoát" khỏi khung dữ liệu."""
     return _TAG.sub("", answer)
-
 
 def _tagged(sentences: list[str]) -> str:
     numbered = "\n".join(f"{i}. {s}" for i, s in enumerate(sentences, 1))
     return f"<cau_tra_loi>\n{numbered}\n</cau_tra_loi>"
 
-
 @dataclass
 class GatewayEmbedder:
-    """Embedding của judge, gọi model embedding (bge-m3) trên gateway của BTC."""
 
     llm: LLMClient
     model_name: str
@@ -80,12 +69,10 @@ class GatewayEmbedder:
     def embed(self, texts: list[str]) -> list[list[float]]:
         return self.llm.embed(texts, model=self.model_name)
 
-
 def _cosine(a, b) -> float:
     a, b = [float(x) for x in a], [float(x) for x in b]
     norm = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(x * x for x in b))
     return sum(x * y for x, y in zip(a, b, strict=True)) / norm if norm else 0.0
-
 
 @dataclass
 class Judge:
@@ -105,8 +92,6 @@ class Judge:
     def _label(
         self, system: str, header: str, sentences: list[str], labels: set[str], fallback: str
     ) -> list[str]:
-        """Gắn nhãn cả câu trả lời trong một lần gọi. Câu nào không đọc được nhãn thì gọi lại
-        riêng câu đó; nếu vẫn không đọc được thì gán `fallback` (nhãn bất lợi cho thí sinh)."""
         reply = _plain(self._chat(system, f"{header}\n\n{_tagged(sentences)}"))
         parsed = {int(i): lab for i, lab in _LABEL_LINE.findall(reply) if lab in labels}
         result = []
@@ -119,7 +104,6 @@ class Judge:
         return result
 
     def groundedness(self, query: str, answer: str, contexts: list[str]) -> float:
-        """Tỷ lệ câu cần kiểm chứng được ngữ cảnh đã truy xuất hỗ trợ. Cao hơn là tốt hơn."""
         sentences = split_sentences(_clean(answer))
         if not sentences:
             return 0.0
@@ -137,7 +121,6 @@ class Judge:
     def noise_sensitivity(
         self, query: str, answer: str, reference: str, gold_contexts: list[str]
     ) -> float:
-        """Tỷ lệ câu sai so với tham chiếu chuẩn (đáp án + tài liệu chuẩn). THẤP hơn là tốt hơn."""
         sentences = split_sentences(_clean(answer))
         if not sentences:
             return 1.0
@@ -156,13 +139,11 @@ class Judge:
         return checkable.count("incorrect") / len(checkable) if checkable else 1.0
 
     def response_relevancy(self, query: str, answer: str) -> float:
-        """Sinh ngược n câu hỏi từ câu trả lời; trung bình cosine với câu hỏi gốc, cắt về [0, 1]."""
         n = self.relevancy_questions
         reply = self._chat(
             _QUESTION_GEN_SYSTEM.format(n=n), f"<cau_tra_loi>\n{_clean(answer)}\n</cau_tra_loi>"
         )
         questions = [_LIST_PREFIX.sub("", q).strip() for q in reply.splitlines()]
-        # chỉ giữ câu hỏi thật, bỏ các dòng dẫn dắt judge đôi khi tự thêm vào
         questions = [q for q in questions if q.endswith("?")][:n]
         if not questions:
             return 0.0
@@ -171,7 +152,6 @@ class Judge:
         return sum(cosines) / len(cosines)
 
     def abstention(self, query: str, answer: str) -> float:
-        """1 nếu hệ thống từ chối đúng cách với câu hỏi nằm ngoài tài liệu, ngược lại 0."""
         reply = _plain(
             self._chat(
                 _ABSTENTION_SYSTEM,

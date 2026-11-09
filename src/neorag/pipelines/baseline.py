@@ -1,14 +1,3 @@
-"""Baseline chính thức: naive RAG đơn giản nhất có thể.
-
-1. Embed nguyên từng đoạn văn của corpus (không chunking) bằng bge-m3 qua gateway của BTC.
-2. Với mỗi câu hỏi, lấy các đoạn có cosine similarity cao nhất.
-3. Đưa top-k đoạn vào một prompt đơn giản và gọi LLM một lần.
-
-Baseline cố ý không tối ưu gì để bạn có nhiều chỗ cải thiện, ví dụ: chunking, hybrid search
-(BM25 + dense), reranker, query rewriting, lọc theo CLB, prompt tốt hơn, xử lý câu hỏi
-không có đáp án, ...
-"""
-
 from __future__ import annotations
 
 import os
@@ -26,19 +15,14 @@ TÀI LIỆU:
 
 CÂU HỎI: {query}"""
 
-
 class GatewayEmbedder:
-    """Embedding qua gateway (cùng key với LLM). Muốn chạy model local thì dùng
-    neorag.embeddings.LocalEmbedder (cài thêm: python scripts/install.py --local)."""
 
     def __init__(self, llm: LLMClient, model_name: str):
         self.llm, self.model_name = llm, model_name
 
     def embed(self, texts: list[str]) -> np.ndarray:
-        """Trả về ma trận (len(texts), dim) đã chuẩn hóa L2."""
         vectors = np.asarray(self.llm.embed(texts, model=self.model_name), dtype=np.float32)
         return vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
-
 
 class BaselinePipeline(RAGPipeline):
     def __init__(
@@ -50,8 +34,8 @@ class BaselinePipeline(RAGPipeline):
         llm: LLMClient | None = None,
         embedder=None,
     ):
-        self.top_k = top_k  # số doc đưa vào prompt
-        self.n_retrieved = n_retrieved  # số doc trả về để chấm retrieval
+        self.top_k = top_k
+        self.n_retrieved = n_retrieved
         self.llm_model = llm_model or os.getenv("LLM_MODEL", "claude-haiku-5-5")
         self.llm = llm or LLMClient(cache_path=".cache/pipeline.sqlite")
         self.embedder = embedder or GatewayEmbedder(

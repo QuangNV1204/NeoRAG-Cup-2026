@@ -1,5 +1,3 @@
-"""Định dạng dữ liệu của cuộc thi và các hàm đọc/ghi JSONL."""
-
 from __future__ import annotations
 
 import json
@@ -9,20 +7,16 @@ from pathlib import Path
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
-
 @dataclass(frozen=True)
 class Document:
-    """Một đoạn văn trong corpus. `id` là định danh dùng trong mọi file ground truth."""
 
     id: int
     club: str
     topic: str
     text: str
 
-
 @dataclass(frozen=True)
 class Query:
-    """Một câu hỏi. Các trường ground truth chỉ có ở tập train và ở file đáp án BTC giữ."""
 
     id: str
     query: str
@@ -37,19 +31,15 @@ class Query:
     def has_ground_truth(self) -> bool:
         return bool(self.answer)
 
-
 @dataclass
 class Prediction:
-    """Một dòng trong file nộp bài."""
 
     id: str
     retrieved_ids: list[int]
     answer: str
     latency_ms: float | None = None
 
-
 def read_jsonl(path: str | Path) -> list[dict]:
-    """Đọc JSONL (chấp nhận file có BOM). Mỗi dòng phải là một object JSON."""
     rows = []
     with open(path, encoding="utf-8-sig") as f:
         for line_no, line in enumerate(f, 1):
@@ -65,7 +55,6 @@ def read_jsonl(path: str | Path) -> list[dict]:
             rows.append(row)
     return rows
 
-
 def write_jsonl(path: str | Path, rows: Iterable[dict]) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -73,22 +62,17 @@ def write_jsonl(path: str | Path, rows: Iterable[dict]) -> None:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-
 def _known_fields(cls, row: dict) -> dict:
     names = {f.name for f in fields(cls)}
     return {k: v for k, v in row.items() if k in names}
 
-
 def load_corpus(path: str | Path = DATA_DIR / "corpus.jsonl") -> list[Document]:
     return [Document(**_known_fields(Document, row)) for row in read_jsonl(path)]
-
 
 def load_queries(path: str | Path) -> list[Query]:
     return [Query(**_known_fields(Query, row)) for row in read_jsonl(path)]
 
-
 def load_predictions(path: str | Path) -> list[Prediction]:
-    """Đọc file nộp bài. Bỏ qua trường thừa; báo lỗi rõ ràng nếu thiếu trường hoặc sai kiểu."""
     predictions, errors = [], []
     for n, row in enumerate(read_jsonl(path), 1):
         problem = None
@@ -106,10 +90,8 @@ def load_predictions(path: str | Path) -> list[Prediction]:
         raise ValueError(f"{path} sai định dạng:\n- " + "\n- ".join(errors[:20]))
     return predictions
 
-
 def save_predictions(path: str | Path, predictions: Iterable[Prediction]) -> None:
     write_jsonl(path, (asdict(p) for p in predictions))
-
 
 def validate_predictions(
     predictions: list[Prediction],
@@ -118,7 +100,6 @@ def validate_predictions(
     max_retrieved: int,
     max_answer_chars: int,
 ) -> list[str]:
-    """Kiểm tra nội dung file nộp bài. Trả về danh sách lỗi (rỗng nghĩa là hợp lệ)."""
     errors: list[str] = []
     expected = {q.id for q in queries}
     seen: set[str] = set()

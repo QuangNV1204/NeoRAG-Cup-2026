@@ -1,5 +1,3 @@
-"""Chạy pipeline trên một bộ câu hỏi và ghi file predictions đúng định dạng nộp bài."""
-
 from __future__ import annotations
 
 import time
@@ -8,14 +6,12 @@ from collections.abc import Callable
 from neorag.data import Prediction, Query
 from neorag.pipelines.base import RAGPipeline
 
-
 def predict(
     pipeline: RAGPipeline,
     queries: list[Query],
     max_retrieved: int,
     on_step: Callable[[Prediction], None] | None = None,
 ) -> list[Prediction]:
-    """Trả lời từng câu hỏi. Pipeline phải được `index` trước khi gọi hàm này."""
     predictions = []
     for q in queries:
         start = time.perf_counter()
