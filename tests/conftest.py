@@ -5,9 +5,7 @@ import pytest
 
 from neorag.data import Document, Query
 
-
 class FakeLLM:
-    """LLM giả cho test: trả lời theo hàm `responder`."""
 
     def __init__(self, responder=None):
         self.responder = responder or (lambda messages: "")
@@ -17,9 +15,7 @@ class FakeLLM:
         self.calls.append(messages)
         return self.responder(messages)
 
-
 class FakeEmbedder:
-    """Embedding giả cho test: bag-of-characters, chuẩn hóa L2."""
 
     device = "cpu"
 
@@ -34,7 +30,6 @@ class FakeEmbedder:
         vecs += 1e-3
         return vecs / np.linalg.norm(vecs, axis=1, keepdims=True)
 
-
 @pytest.fixture
 def corpus() -> list[Document]:
     return [
@@ -46,7 +41,6 @@ def corpus() -> list[Document]:
         ),
         Document(3, "CLB Nhà Sáng Tạo Game PTIT (GCC)", "Giới thiệu", "GCC ra đời năm 2023."),
     ]
-
 
 @pytest.fixture
 def gold() -> list[Query]:

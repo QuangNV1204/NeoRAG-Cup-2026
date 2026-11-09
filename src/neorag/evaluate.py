@@ -1,9 +1,3 @@
-"""Bộ chấm chính thức: so file predictions với ground truth và tính toàn bộ metric.
-
-Bộ chấm chỉ đọc file. Nó không gọi code pipeline của thí sinh, nên kết quả không phụ thuộc
-vào việc thí sinh sửa gì trong repo của mình.
-"""
-
 from __future__ import annotations
 
 import json
@@ -19,12 +13,11 @@ from neorag.metrics import lexical
 from neorag.metrics.judge import GatewayEmbedder, Judge
 from neorag.metrics.retrieval import RETRIEVAL_METRICS, score_query
 
-if TYPE_CHECKING:  # bộ chấm chỉ cần thư viện chuẩn của Python (chạy được trên Codabench)
+if TYPE_CHECKING:
     from neorag.llm import LLMClient
 
 LEXICAL = ["string_presence", "rouge_l", "bleu_4"]
 JUDGED = ["groundedness", "response_relevancy", "noise_sensitivity"]
-
 
 @dataclass
 class EvalReport:
@@ -46,7 +39,6 @@ class EvalReport:
                 data[key] = round(data[key], 4)
         return data
 
-
 def _score_one(
     q: Query,
     p: Prediction,
@@ -57,7 +49,7 @@ def _score_one(
     row: dict = {"id": q.id, "answerable": q.answerable}
 
     if not q.answerable:
-        if q.relevant_ids:  # đoạn chứa thông tin liên quan mà đáp án chuẩn nhắc tới
+        if q.relevant_ids:
             row.update(score_query(p.retrieved_ids, set(q.relevant_ids), k_values))
         if judge:
             row["abstention"] = judge.abstention(q.query, p.answer)
@@ -76,7 +68,6 @@ def _score_one(
         row["response_relevancy"] = judge.response_relevancy(q.query, p.answer)
     return row
 
-
 def _check_gold(gold: list[Query], corpus_ids: set[int]) -> None:
     problems = []
     for q in gold:
@@ -89,11 +80,9 @@ def _check_gold(gold: list[Query], corpus_ids: set[int]) -> None:
     if problems:
         raise ValueError("File gold (ground truth) không hợp lệ:\n- " + "\n- ".join(problems))
 
-
 def _aggregate(rows: list[dict]) -> dict[str, float]:
     keys = sorted({k for r in rows for k in r} - {"id", "answerable"})
     return {k: mean(r[k] for r in rows if k in r) for k in keys}
-
 
 def _composite(metrics: dict[str, float], cfg: dict, judged: bool):
     s = cfg["score"]
@@ -112,7 +101,6 @@ def _composite(metrics: dict[str, float], cfg: dict, judged: bool):
     score = s["retrieval_weight"] * retrieval_score + s["generation_weight"] * generation_score
     return retrieval_score, generation_score, score
 
-
 def evaluate(
     gold: list[Query],
     predictions: list[Prediction],
@@ -122,7 +110,6 @@ def evaluate(
     embedder: GatewayEmbedder | None = None,
     on_step: Callable[[], None] | None = None,
 ) -> EvalReport:
-    """Chấm điểm. `llm=None` bỏ qua các metric cần judge (nhanh, miễn phí, điểm tổng = None)."""
     corpus_ids = {d.id for d in corpus}
     _check_gold(gold, corpus_ids)
     errors = validate_predictions(predictions, gold, corpus_ids, **cfg["submission"])
@@ -165,7 +152,6 @@ def evaluate(
         per_query=rows,
     )
 
-
 def to_markdown(report: EvalReport) -> str:
     m = report.metrics
     names = list(RETRIEVAL_METRICS)
@@ -200,7 +186,6 @@ def to_markdown(report: EvalReport) -> str:
         lines.append(f"- Generation score: **{report.generation_score:.4f}**")
         lines.append(f"- Benchmark score: **{report.score:.4f}**")
     return "\n".join(lines) + "\n"
-
 
 def save_report(report: EvalReport, out_dir: str | Path) -> None:
     out = Path(out_dir)
