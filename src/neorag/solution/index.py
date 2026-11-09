@@ -12,14 +12,12 @@ import numpy as np
 
 EmbedFn = Callable[[list[str]], np.ndarray]
 
-
 def _normalize_rows(matrix: np.ndarray) -> np.ndarray:
     matrix = np.asarray(matrix, dtype=np.float32)
     if matrix.ndim == 1:
         matrix = matrix.reshape(1, -1)
     norms = np.linalg.norm(matrix, axis=1, keepdims=True)
     return matrix / np.maximum(norms, 1e-12)
-
 
 class DenseIndex:
     def __init__(
@@ -69,7 +67,6 @@ class DenseIndex:
         return self
 
     def embed_queries(self, texts: Sequence[str]) -> np.ndarray:
-        """Embed hàng loạt truy vấn trong ít lượt gọi nhất, trả về ma trận (len(texts), dim) chuẩn hóa L2."""
         items = list(texts)
         if not items:
             return np.zeros((0, 0), dtype=np.float32)
@@ -91,11 +88,9 @@ class DenseIndex:
         return np.asarray(self.matrix @ query_vector, dtype=np.float32)
 
     def score_matrix(self, query_vectors: np.ndarray) -> np.ndarray:
-        """Tính đồng thời điểm cosine cho nhiều truy vấn: trả về (n_queries, n_items)."""
         if self.matrix.size == 0 or query_vectors.size == 0:
             return np.zeros((len(query_vectors), len(self.matrix)), dtype=np.float32)
         return np.asarray(query_vectors @ self.matrix.T, dtype=np.float32)
-
 
 class BM25Index:
     def __init__(
@@ -144,7 +139,6 @@ class BM25Index:
             result[index] = score
         return result
 
-
 def normalize01(values: np.ndarray) -> np.ndarray:
     values = np.asarray(values, dtype=np.float32)
     if values.size == 0:
@@ -155,17 +149,10 @@ def normalize01(values: np.ndarray) -> np.ndarray:
         return np.zeros_like(values)
     return (values - low) / (high - low)
 
-
 def saturate_bm25(values: np.ndarray, k: float = 12.0) -> np.ndarray:
-    """Chuẩn hóa bão hòa điểm BM25: f(s) = max(s, 0) / (max(s, 0) + k).
-
-    Giúp triệt tiêu hiện tượng từ khóa đơn lẻ bị phóng đại quá mức khi min-max,
-    đồng thời giữ cho điểm sparse và dense có thang đo cân bằng, tương thích tốt với nhau.
-    """
     arr = np.maximum(np.asarray(values, dtype=np.float32), 0.0)
     if arr.size == 0:
         return arr
     return arr / (arr + k)
-
 
 __all__ = ["BM25Index", "DenseIndex", "normalize01", "saturate_bm25"]

@@ -1,26 +1,3 @@
-"""Kiến trúc NeoRAG tập trung (Focused Multi-Stage RAG):
-
-1. Dual-Granularity Indexing (Whole-Passage First):
-   - Embed nguyên từng đoạn văn trong corpus bằng `bge-m3` (vì mỗi đoạn 1-5 câu, tự trọn nghĩa),
-     kết hợp đơn vị con giữ tiêu đề (max-pooling) cho các đoạn liệt kê dài (giải thưởng, BCN)
-     và hai chỉ mục BM25 song song (có dấu + không dấu kèm bigram từ).
-2. Stage 1 — QueryPlanner:
-   - Giải mã từ viết tắt, không dấu, tiếng lóng sinh viên PTIT và nhập nhằng tên gọi giữa các CLB,
-     đồng thời tách truy vấn con cho câu hỏi nhiều ý / so sánh nhiều CLB.
-3. Stage 2 — WholePassageHybridRetriever:
-   - Embed hàng loạt truy vấn trong 1 lượt gọi, hợp nhất điểm Dense nguyên đoạn + Dense đơn vị +
-     BM25 kép theo (Max + Mean + Reciprocal Rank Fusion), mở rộng anh em cùng nhóm `(CLB, chủ đề)`
-     để lấy tập ứng viên ~34-38 đoạn nguyên vẹn (không cắt bớt ký tự).
-4. Stage 3 — EvidenceSelector (Listwise Rerank + Phân loại khả năng trả lời):
-   - Đọc trọn vẹn các đoạn ứng viên, xác định `STATUS` (`ANSWERABLE` | `PARTIAL` | `UNANSWERABLE`),
-     tách riêng `CORE_IDS` (tối thiểu các đoạn trực tiếp dùng để viết đáp án) và `EXTRA_IDS`
-     (đoạn dự phòng cho Recall@5/10).
-5. Stage 4 — GroundedComposer (Focused Context + Dynamic Few-Shot + CoT Kiểm chứng):
-   - Chỉ đưa `CORE_IDS` vào ngữ cảnh sinh câu trả lời để triệt tiêu nhiễu (`Noise Sensitivity`),
-     kèm các ví dụ chuẩn gần nhất từ tập train (leave-one-out) và bước tự kiểm tra số liệu/ngày tháng
-     trước khi xuất câu trả lời cuối cùng.
-"""
-
 from __future__ import annotations
 
 import json
@@ -58,7 +35,6 @@ from neorag.solution.vietnamese import (
 
 FALLBACK_ABSTAIN = "Tài liệu hiện có không có thông tin để trả lời câu hỏi này."
 
-# Bảng ngữ cảnh miền S2B ngắn gọn giúp LLM giải mã chính xác cách gọi của sinh viên.
 DOMAIN_GLOSSARY = """BỐI CẢNH CỘNG ĐỒNG S2B TẠI PTIT (Học viện Công nghệ Bưu chính Viễn thông):
 1. CLB Lập Trình PTIT (tên viết tắt: PROPTIT / ProPTIT, tiếng Anh: Programming PTIT; hay gọi: clb lập trình, clb lt, clb code):
    - Lập trình C, C++, Cấu trúc dữ liệu và Giải thuật (CTDL&GT), Java OOP; có 5 team dự án (Team AI, Team Data, Team Game, Team Mobile, Team Web; trước đây có Team Backend nay gộp vào Team Web).
@@ -200,7 +176,6 @@ _ANSWER_SPLIT_RE = re.compile(
 )
 _DIGITS_RE = re.compile(r"\d+")
 
-# Các chủ đề nhiều đoạn theo năm/nhiệm kỳ/quy trình nên mở rộng anh em trong tập ứng viên rerank.
 _SERIES_TOPICS = frozenset(
     {
         "Giải thưởng",
@@ -216,7 +191,6 @@ _SERIES_TOPICS = frozenset(
     }
 )
 
-# Bộ ví dụ chuẩn mặc định phòng trường hợp không nạp tập train.
 _FALLBACK_EXAMPLES: tuple[tuple[str, str], ...] = (
     (
         "CLB Lập Trình PTIT được thành lập ngày nào và phương châm hoạt động là gì?",
@@ -232,7 +206,6 @@ _FALLBACK_EXAMPLES: tuple[tuple[str, str], ...] = (
     ),
 )
 
-
 @dataclass(frozen=True)
 class QueryPlan:
     raw_query: str
@@ -240,14 +213,12 @@ class QueryPlan:
     scope: str
     search_queries: list[tuple[str, float]]
 
-
 @dataclass(frozen=True)
 class EvidenceDecision:
     status: str
     core_ids: list[int]
     extra_ids: list[int]
     raw_output: str = ""
-
 
 def _parse_id_list(text: str, valid_ids: set[int], limit: int) -> list[int]:
     if "NONE" in text.upper():
@@ -261,13 +232,10 @@ def _parse_id_list(text: str, valid_ids: set[int], limit: int) -> list[int]:
                 break
     return result
 
-
 def format_doc_block(doc: Document) -> str:
     return f"[{doc.id}] {doc.club} — {doc.topic}\n{doc.text}"
 
-
 class TrainFewShotBank:
-    """Kho ví dụ chuẩn từ `data/train/questions.jsonl` với cơ chế leave-one-out nghiêm ngặt."""
 
     def __init__(self, dense_factory: Any, enabled: bool = True):
         self.rows: list[dict[str, Any]] = []
@@ -291,7 +259,7 @@ class TrainFewShotBank:
                     [row["query"] for row in self.rows],
                     name="train_fewshot_queries_v2",
                 )
-        except Exception:  # pragma: no cover - an toàn khi file thiếu/hỏng
+        except Exception:
             self.rows = []
             self.index = None
 
@@ -311,7 +279,6 @@ class TrainFewShotBank:
         sims = self.index.scores(query_vector)
         order = [int(i) for i in np.argsort(-sims)]
 
-        # Loại trừ chính câu hỏi đang xét (leave-one-out khi test trên tập train).
         eligible = [
             i
             for i in order
@@ -349,17 +316,13 @@ class TrainFewShotBank:
             _take(abstain_idxs, 1)
             _take(answerable_idxs, k)
         else:
-            # Với ANSWERABLE: lấy 100% ví dụ ANSWERABLE để LLM học văn phong tự tin, trực tiếp,
-            # tuyệt đối không đưa ví dụ từ chối để tránh mô hình bắt chước các câu phân bua/rào đón thừa.
             _take(answerable_idxs, k)
             _take(partial_idxs, 1)
             _take(eligible, k)
 
         return [(self.rows[i]["query"], self.rows[i]["answer"]) for i in chosen[:k]]
 
-
 class QueryPlanner:
-    """Stage 1: Chuẩn hóa câu hỏi sinh viên & tách truy vấn con đa góc nhìn."""
 
     def __init__(self, llm: LLMClient | None, model: str, enabled: bool = True):
         self.llm = llm
@@ -378,7 +341,7 @@ class QueryPlanner:
                 [{"role": "user", "content": QUERY_PLAN_PROMPT.format(query=query)}],
                 model=self.model,
             )
-        except Exception:  # pragma: no cover - phụ thuộc gateway
+        except Exception:
             return self._fallback_plan(query, slang_expanded, det_multi)
 
         scope_match = _SCOPE_RE.search(raw)
@@ -445,9 +408,7 @@ class QueryPlanner:
                 break
         return deduped or [(items[0][0], 1.0)]
 
-
 class WholePassageHybridRetriever:
-    """Stage 2: Truy xuất Hybrid ưu tiên Whole-Passage Embedding + Smart-Unit + Dual BM25."""
 
     def __init__(
         self,
@@ -485,7 +446,6 @@ class WholePassageHybridRetriever:
     ) -> tuple[list[Document], list[int], dict[int, float], np.ndarray]:
         texts = [q for q, _ in plan.search_queries]
 
-        # Chỉ gọi API embedding 1 lần duy nhất cho toàn bộ truy vấn tìm kiếm của câu hỏi.
         query_vecs = self.whole_dense.embed_queries(texts)
         whole_mat = self.whole_dense.score_matrix(query_vecs)
         unit_mat = self.unit_dense.score_matrix(query_vecs)
@@ -506,7 +466,6 @@ class WholePassageHybridRetriever:
                     unit_raw[d_idx] = float(whole_mat[q_idx, d_idx])
             unit_s = normalize01(unit_raw)
 
-            # Ưu tiên Whole-Passage (0.65) làm trụ cột, bổ trợ bởi mệnh đề chi tiết (0.35).
             dense_s = 0.65 * whole_s + 0.35 * unit_s
 
             acc_s = saturate_bm25(self.bm25_accented.scores(q_text), k=12.0)
@@ -525,7 +484,6 @@ class WholePassageHybridRetriever:
         rrf_norm = normalize01(rrf_scores)
         final_scores = 0.55 * max_s + 0.15 * mean_s + 0.30 * rrf_norm
 
-        # Nhẹ nhàng cộng điểm cho CLB được hỏi nếu câu hỏi chỉ hỏi về 1 CLB duy nhất
         if plan.scope == "SINGLE":
             clubs = detect_clubs(plan.normalized_query)
             if len(clubs) == 1:
@@ -534,8 +492,6 @@ class WholePassageHybridRetriever:
                     if doc.club == target_club:
                         final_scores[idx] += 0.04
 
-        # Thưởng / phạt thời gian (Temporal Penalty & Boost):
-        # Tránh nhầm Ban chủ nhiệm / Giải thưởng khác năm/nhiệm kỳ
         q_temp = parse_temporals(f"{plan.raw_query} {plan.normalized_query}")
         if q_temp["years"] or q_temp["ranges"]:
             q_years = q_temp["years"]
@@ -553,13 +509,10 @@ class WholePassageHybridRetriever:
                 if is_temporal_doc and d_years:
                     common_years = d_years & q_years
                     if not common_years:
-                        # Mốc thời gian hoàn toàn lệch với câu hỏi -> phạt Temporal Penalty
                         final_scores[idx] -= 0.14
                     else:
-                        # Khớp năm -> thưởng điểm
                         final_scores[idx] += 0.08
                         if q_ranges & d_ranges:
-                            # Khớp chính xác dải nhiệm kỳ/giai đoạn -> thưởng thêm
                             final_scores[idx] += 0.08
 
         global_order = [int(i) for i in np.argsort(-final_scores)]
@@ -569,7 +522,6 @@ class WholePassageHybridRetriever:
         hybrid_ids = [self.documents[i].id for i in global_order]
         score_map = {self.documents[i].id: float(final_scores[i]) for i in global_order[:20]}
 
-        # Vector đại diện của câu hỏi (trung bình có trọng số giữa câu gốc và câu đã chuẩn hóa)
         rep_vec = query_vecs[min(1, len(query_vecs) - 1)]
         if len(query_vecs) >= 2:
             blended = 0.45 * query_vecs[0] + 0.55 * query_vecs[1]
@@ -586,7 +538,6 @@ class WholePassageHybridRetriever:
         selected: list[int] = list(global_order[:limit])
         selected_set = set(selected)
 
-        # Với câu hỏi nhiều CLB/so sánh: bảo đảm tập ứng viên cho LLM đọc có đủ đại diện từ cả 3 CLB + S2B.
         if scope == "MULTI_CLUB":
             quotas = [(MAIN_CLUBS[0], 6), (MAIN_CLUBS[1], 6), (MAIN_CLUBS[2], 6), (S2B_CLUB, 3)]
             for club_name, quota in quotas:
@@ -596,8 +547,6 @@ class WholePassageHybridRetriever:
                         selected.append(idx)
                         selected_set.add(idx)
 
-        # Mở rộng anh em cùng (CLB, chủ đề) cho các chủ đề chia nhiều đoạn theo năm/nhiệm kỳ
-        # khi có ít nhất 1 đoạn thuộc nhóm đó nằm trong top-10.
         for idx in global_order[:10]:
             doc = self.documents[idx]
             if doc.topic not in _SERIES_TOPICS:
@@ -618,9 +567,7 @@ class WholePassageHybridRetriever:
         selected.sort(key=lambda i: (-float(scores[i]), i))
         return selected[: min(len(self.documents), limit + 8)]
 
-
 class EvidenceSelector:
-    """Stage 3: Đọc trọn vẹn các đoạn ứng viên, chọn CORE_IDS tối thiểu và phân loại STATUS."""
 
     def __init__(self, llm: LLMClient | None, model: str, max_core_ids: int = 6):
         self.llm = llm
@@ -634,7 +581,6 @@ class EvidenceSelector:
         plan: QueryPlan,
         hybrid_rank: dict[int, int],
     ) -> list[int]:
-        """Sắp xếp lại nội bộ CORE_IDS: đưa đoạn trực tiếp trả lời câu hỏi lên rank 1 (tối ưu MRR@5 & NDCG@5)."""
         if len(core_ids) <= 1:
             return core_ids
 
@@ -655,7 +601,6 @@ class EvidenceSelector:
 
             score = 0.0
 
-            # 1. Khớp thời gian
             if q_years:
                 if d_years & q_years:
                     score += 25.0
@@ -664,16 +609,13 @@ class EvidenceSelector:
                 elif d_years:
                     score -= 25.0
 
-            # 2. Khớp từ khóa thực thể / nội dung
             d_words = set(content_words(doc.text.lower()))
             overlap = len(q_words & d_words)
             score += float(overlap) * 2.0
 
-            # 3. Điểm hybrid retriever
             h_rank = hybrid_rank.get(cid, 999)
             score += max(0.0, 20.0 - h_rank * 0.5)
 
-            # 4. Thứ tự gốc từ LLM
             score += 10.0 / (1.0 + orig_idx)
 
             scored_ids.append((score, cid))
@@ -689,12 +631,10 @@ class EvidenceSelector:
         hybrid_ids: list[int],
         limit: int = 5,
     ) -> list[int]:
-        """Ưu tiên các đoạn anh em (cùng CLB và chủ đề) của CORE_IDS cho EXTRA_IDS."""
         doc_map = {d.id: d for d in candidates}
         hybrid_rank = {doc_id: rank for rank, doc_id in enumerate(hybrid_ids)}
         core_set = set(core_ids)
 
-        # 1. Tìm các đoạn anh em (cùng club và cùng topic với bất kỳ core_id nào)
         sibling_candidates: list[int] = []
         for cid in core_ids:
             if cid not in doc_map:
@@ -710,10 +650,8 @@ class EvidenceSelector:
                 ):
                     sibling_candidates.append(doc.id)
 
-        # Sắp xếp các đoạn anh em theo thứ tự hybrid rank
         sibling_candidates.sort(key=lambda did: hybrid_rank.get(did, 999))
 
-        # 2. Ghép thứ tự EXTRA_IDS: Anh em trước -> Gợi ý LLM -> Các ứng viên điểm cao còn lại
         extras: list[int] = []
         for did in [*sibling_candidates, *llm_extra_ids, *hybrid_ids]:
             if did in doc_map and did not in core_set and did not in extras:
@@ -749,7 +687,7 @@ class EvidenceSelector:
         )
         try:
             raw = self.llm.chat([{"role": "user", "content": prompt}], model=self.model)
-        except Exception as exc:  # pragma: no cover - phụ thuộc gateway
+        except Exception as exc:
             fallback = hybrid_ids[: min(4, len(hybrid_ids))]
             core = self._rerank_core_ids(fallback, doc_map, plan, hybrid_rank)
             extras = self._prioritize_sibling_extras(core, [], candidates, hybrid_ids, limit=5)
@@ -764,7 +702,6 @@ class EvidenceSelector:
         core_match = _CORE_IDS_RE.search(raw)
         extra_match = _EXTRA_IDS_RE.search(raw)
 
-        # Tương thích mượt cả khi mock LLM trả về định dạng cũ `ID: ...`
         if not status_match and not core_match:
             legacy_ids = _parse_id_list(raw, valid_ids, self.max_core_ids)
             core = legacy_ids or hybrid_ids[: min(3, len(hybrid_ids))]
@@ -782,10 +719,8 @@ class EvidenceSelector:
         if status != "UNANSWERABLE" and not core_ids:
             core_ids = [doc.id for doc in candidates[: min(4, len(candidates))]]
 
-        # 1. Sắp xếp lại nội bộ CORE_IDS: đưa đoạn trực tiếp nhất lên rank 1
         core_ids = self._rerank_core_ids(core_ids, doc_map, plan, hybrid_rank)
 
-        # 2. Ưu tiên đoạn anh em cho EXTRA_IDS
         extra_ids = self._prioritize_sibling_extras(
             core_ids=core_ids,
             llm_extra_ids=llm_extra_ids,
@@ -801,9 +736,7 @@ class EvidenceSelector:
             raw_output=raw,
         )
 
-
 class GroundedComposer:
-    """Stage 4: Sinh câu trả lời chuẩn xác trên ngữ cảnh tập trung (`CORE_IDS`) + CoT kiểm chứng."""
 
     def __init__(self, llm: LLMClient, model: str, fewshot_count: int = 5):
         self.llm = llm
@@ -844,7 +777,7 @@ class GroundedComposer:
                 ],
                 model=self.model,
             )
-        except Exception as exc:  # pragma: no cover - phụ thuộc gateway
+        except Exception as exc:
             return FALLBACK_ABSTAIN, f"ERROR {type(exc).__name__}: {exc}"
 
         answer = self._extract_answer(raw, decision.status)
@@ -857,7 +790,6 @@ class GroundedComposer:
         if len(parts) >= 2:
             candidate = parts[-1].strip()
         else:
-            # Nếu LLM không in nhãn TRẢ LỜI:, bỏ dòng KIỂM TRA: nếu có.
             lines = [
                 line
                 for line in text.splitlines()
@@ -866,11 +798,7 @@ class GroundedComposer:
             candidate = "\n".join(lines).strip()
         return sanitize_answer(candidate, status=status, max_chars=2000)
 
-
 class NeoRAGPipeline(RAGPipeline):
-    """Pipeline chính thức xây dựng lại từ đầu cho dữ liệu S2B:
-    Whole-Passage Embeddings + Multi-Query Hybrid + Listwise Evidence Selection + Focused CoT Generation.
-    """
 
     def __init__(
         self,
@@ -929,17 +857,14 @@ class NeoRAGPipeline(RAGPipeline):
             raise ValueError("Corpus rỗng")
         self.doc_by_id = {doc.id: doc for doc in self.documents}
 
-        # 1. Whole-Passage Embeddings: embed trọn vẹn từng passage kèm tên CLB & chủ đề.
         whole_texts = [format_passage_dense_text(doc) for doc in self.documents]
         whole_dense = self._make_dense_index().fit(whole_texts, name="whole_passages_v2")
 
-        # 2. Smart-Unit Embeddings: hỗ trợ bắt chi tiết nhỏ trong các đoạn liệt kê dài (định dạng [CLB | Topic]).
         units = build_smart_units(self.documents)
         unit_dense = self._make_dense_index().fit(
             [unit.context for unit in units], name="smart_units_v3"
         )
 
-        # 3. Dual BM25: cả có dấu + không dấu kèm bigram từ và bí danh CLB.
         bm25_texts = [format_passage_bm25_text(doc) for doc in self.documents]
         bm25_accented = BM25Index(bm25_texts, tokenizer=accented_bm25_tokens)
         bm25_ascii = BM25Index(bm25_texts, tokenizer=ascii_bm25_tokens)
@@ -968,7 +893,6 @@ class NeoRAGPipeline(RAGPipeline):
             model=self.llm_model,
             fewshot_count=self.fewshot_count,
         )
-        # Chỉ nạp kho few-shot từ tập train khi chạy trên corpus thật (hoặc khi bật tường minh).
         enable_bank = self.use_train_fewshot and len(self.documents) >= 20
         self.fewshot_bank = TrainFewShotBank(
             dense_factory=self._make_dense_index,
@@ -984,20 +908,16 @@ class NeoRAGPipeline(RAGPipeline):
         ):
             raise RuntimeError("Pipeline chưa được index. Gọi index(corpus) trước.")
 
-        # Stage 1: Chuẩn hóa câu hỏi & tách truy vấn tìm kiếm
         plan = self.planner.plan(query)
 
-        # Stage 2: Truy xuất tập ứng viên nguyên đoạn độ phủ cao
         candidates, hybrid_ids, score_map, query_vec = self.retriever.retrieve_candidates(plan)
 
-        # Stage 3: Chọn bằng chứng tối thiểu (CORE_IDS) + xếp hạng dự phòng (EXTRA_IDS) + STATUS
         decision = self.selector.select(plan, candidates, hybrid_ids)
 
         core_docs = [self.doc_by_id[doc_id] for doc_id in decision.core_ids if doc_id in self.doc_by_id]
         if decision.status != "UNANSWERABLE" and not core_docs:
             core_docs = candidates[: min(4, len(candidates))]
 
-        # Stage 4: Chọn few-shot tương đồng (leave-one-out) & sinh câu trả lời bám sát CORE_IDS
         fewshots = (
             self.fewshot_bank.select(
                 raw_query=plan.raw_query,
@@ -1011,8 +931,6 @@ class NeoRAGPipeline(RAGPipeline):
         )
         answer, compose_raw = self.composer.compose(plan, decision, core_docs, fewshots)
 
-        # Ghép danh sách retrieved_ids tối ưu cho Recall@5, MRR@5, NDCG@5 và Groundedness:
-        # CORE_IDS đứng đầu (100% đoạn dùng viết câu trả lời nằm trong retrieved_ids) -> EXTRA_IDS -> Hybrid.
         retrieved_ids: list[int] = []
         for doc_id in [*decision.core_ids, *decision.extra_ids, *hybrid_ids]:
             if doc_id in self.doc_by_id and doc_id not in retrieved_ids:
@@ -1048,11 +966,9 @@ class NeoRAGPipeline(RAGPipeline):
         candidates: list[Document],
         plan: QueryPlan,
     ) -> list[int]:
-        """Đảm bảo trong top-5 có đầy đủ đại diện của các CLB được so sánh."""
         if plan.scope != "MULTI_CLUB":
             return retrieved_ids
 
-        # Nhận diện các CLB mục tiêu được nhắc tới trong truy vấn
         detected = [c for c in detect_clubs(plan.normalized_query) if c in MAIN_CLUBS]
         target_clubs = detected if len(detected) >= 2 else list(MAIN_CLUBS)
 
@@ -1086,7 +1002,6 @@ class NeoRAGPipeline(RAGPipeline):
 
         for ins_id in insertions:
             if len(head) >= 5:
-                # Tìm phần tử từ cuối top 5 có club đã xuất hiện ít nhất 2 lần trong head
                 club_counts: dict[str, int] = {}
                 for d_id in head:
                     c = self.doc_by_id[d_id].club
@@ -1113,7 +1028,6 @@ class NeoRAGPipeline(RAGPipeline):
             if doc_id not in new_order:
                 new_order.append(doc_id)
         return new_order[: self.config.max_retrieved]
-
 
 __all__ = [
     "EvidenceDecision",

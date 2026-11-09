@@ -99,7 +99,6 @@ Hãy kiểm tra câu trả lời nháp và viết lại câu trả lời cuối 
 - Giữ nguyên cụm từ, số liệu, ngày tháng quan trọng như trong tài liệu.
 - Tối đa 4 câu, đoạn văn, không markdown. Chỉ trả về câu trả lời cuối cùng."""
 
-
 @dataclass
 class AnswerGenerator:
     llm: LLMClient
@@ -107,7 +106,6 @@ class AnswerGenerator:
     last_error: str = field(default="", init=False)
 
     def _context(self, documents: list[Document], analysis: QueryAnalysis) -> str:
-        # Câu hỏi nhiều ý/nhiều CLB cần nhiều passage hơn để trả lời đủ từng ý.
         limit = self.config.context_docs_multi if analysis.is_multi else self.config.context_docs
         rows = []
         for doc in documents[:limit]:
@@ -115,7 +113,6 @@ class AnswerGenerator:
         return "\n\n".join(rows)
 
     def _extract_facts(self, query: str, context: str) -> str:
-        """Lượt trích dữ kiện: liệt kê đủ các dữ kiện liên quan trước khi viết câu trả lời."""
         prompt = FACT_PROMPT.format(context=context, query=query)
         try:
             raw = self.llm.chat(
@@ -125,7 +122,7 @@ class AnswerGenerator:
                 ],
                 model=self.config.llm_model,
             )
-        except Exception as exc:  # pragma: no cover - phụ thuộc gateway
+        except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
             return ""
 
@@ -165,7 +162,7 @@ class AnswerGenerator:
                     model=self.config.llm_model,
                 )
             )
-        except Exception as exc:  # pragma: no cover - phụ thuộc gateway
+        except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
             return "Tài liệu hiện có không cung cấp thông tin để trả lời câu hỏi này."
 
@@ -194,11 +191,10 @@ class AnswerGenerator:
                 )
                 if verified:
                     draft = verified
-            except Exception as exc:  # pragma: no cover - phụ thuộc gateway
+            except Exception as exc:
                 self.last_error = f"{type(exc).__name__}: {exc}"
 
         return clean_answer(draft, max_chars=2000)
-
 
 __all__ = [
     "AnswerGenerator",

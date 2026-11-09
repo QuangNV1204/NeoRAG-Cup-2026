@@ -22,14 +22,12 @@ from neorag.solution.vietnamese import (
     strip_diacritics,
 )
 
-
 def test_vietnamese_normalization_and_detection():
     assert strip_diacritics("CLB Đa phương tiện") == "CLB Da phuong tien"
     assert detect_clubs("CLB Lập Trình PTIT") == ["CLB Lập Trình PTIT"]
     assert detect_clubs("clb lap trinh ptit") == ["CLB Lập Trình PTIT"]
     assert detect_clubs("MPC tuyển thành viên") == ["CLB Multimedia PTIT"]
     assert detect_clubs("GCC làm game") == ["CLB Nhà Sáng Tạo Game PTIT (GCC)"]
-    # "bên code" trong câu hỏi về GCC tuyệt đối không được nhận nhầm sang ProPTIT
     assert detect_clubs("o gcc ben code dong hon hay ben ve dong hon") == [
         "CLB Nhà Sáng Tạo Game PTIT (GCC)"
     ]
@@ -37,34 +35,29 @@ def test_vietnamese_normalization_and_detection():
     assert is_multi_club_question("So sánh ProPTIT và GCC") is True
     assert is_multi_club_question("ProPTIT thành lập ngày nào?") is False
 
-
 def test_tech_tokens_and_sanitize_answer():
     acc = accented_bm25_tokens("Học ngôn ngữ C, C++ và C# tại CLB.")
     asc = ascii_bm25_tokens("hoc ngon ngu c, c++ va c# tai clb")
     assert {"c", "cpp", "csharp"} <= set(acc)
     assert {"c", "cpp", "csharp"} <= set(asc)
 
-    # Bảo vệ abstention: gỡ tiền tố "Không." sai khi ngay sau đó nói tài liệu không có thông tin
     cleaned = sanitize_answer(
         "Không. Tài liệu hiện có không nêu phần mềm Premiere.",
         status="UNANSWERABLE",
     )
     assert cleaned == "Tài liệu hiện có không nêu phần mềm Premiere."
 
-    # Không cắt hỏng cụm "Theo Phòng truyền thống..." hoặc "Theo tài liệu hiện có..."
     preserved = sanitize_answer(
         "Theo Phòng truyền thống của CLB Lập Trình PTIT, Chủ nhiệm là Đàm Bá Quyền."
     )
     assert preserved.startswith("Theo Phòng truyền thống")
 
-    # Loại bỏ câu phân bua/rào đón tiêu cực ở cuối câu trả lời đầy đủ (ANSWERABLE)
     hedged = (
         "CLB Lập Trình PTIT dạy ngôn ngữ C trong vòng training để bám sát chương trình trên trường. "
         "Tài liệu không so sánh trực tiếp với việc học Python."
     )
     cleaned_hedge = sanitize_answer(hedged, status="ANSWERABLE")
     assert cleaned_hedge == "CLB Lập Trình PTIT dạy ngôn ngữ C trong vòng training để bám sát chương trình trên trường."
-
 
 def test_chunking_and_smart_units(corpus):
     chunks = build_chunks(corpus)
@@ -90,7 +83,6 @@ def test_chunking_and_smart_units(corpus):
     assert all(u.context.startswith(f"[{u.club} | {u.topic}] ") for u in units)
     assert format_passage_dense_text(corpus[0]).startswith("CLB Lập Trình PTIT — Giới thiệu:")
 
-
 def test_bm25_ascii_handles_accented_corpus():
     docs = [
         "CLB Lập Trình PTIT được thành lập ngày 09/10/2011.",
@@ -101,7 +93,6 @@ def test_bm25_ascii_handles_accented_corpus():
     scores = index.scores("clb lap trinh ptit thanh lap ngay nao")
     assert int(scores.argmax()) == 0
     assert scores[0] > scores[1]
-
 
 def test_knowledge_graph_links_related_docs():
     docs = [
@@ -115,7 +106,6 @@ def test_knowledge_graph_links_related_docs():
     assert 1 not in related
     assert graph.summary()["documents"] == 3
 
-
 def test_query_analyzer_and_expander_are_deterministic_without_llm():
     config = SolutionConfig(use_query_expansion=False)
     analysis = QueryAnalyzer().analyze("So sánh ProPTIT và GCC")
@@ -128,9 +118,7 @@ def test_query_analyzer_and_expander_are_deterministic_without_llm():
     assert queries[0].text == analysis.query
     assert any(item.kind == "club" for item in queries)
 
-
 class _OfflineLLM:
-    """Trả lời cố định; đủ để kiểm tra luồng pipeline mà không gọi gateway."""
 
     def __init__(self):
         self.calls = []
@@ -172,7 +160,6 @@ class _OfflineLLM:
             return "ID: 1\nTRẢ LỜI: CLB Lập Trình PTIT được thành lập ngày 09/10/2011."
         return "CLB Lập Trình PTIT được thành lập ngày 09/10/2011."
 
-
 def test_neorag_pipeline_offline_end_to_end(corpus, tmp_path):
     from conftest import FakeEmbedder
     from neorag.pipelines.base import load_pipeline
@@ -200,7 +187,6 @@ def test_neorag_pipeline_offline_end_to_end(corpus, tmp_path):
     assert 1 <= len(out_unans.retrieved_ids) <= 10
     assert pipeline.last_debug["status"] == "UNANSWERABLE"
 
-    # Kiểm tra đảm bảo độ phủ 3 CLB trong top 5 cho câu hỏi MULTI_CLUB
     from neorag.solution.focused import QueryPlan
 
     plan_multi = QueryPlan(
@@ -211,7 +197,6 @@ def test_neorag_pipeline_offline_end_to_end(corpus, tmp_path):
     )
     covered = pipeline._ensure_multi_club_top5([1, 2], corpus, plan_multi)
     assert 3 in covered[:3]
-
 
 def test_pipeline_offline_end_to_end(corpus, tmp_path):
     config = SolutionConfig(
@@ -235,7 +220,6 @@ def test_pipeline_offline_end_to_end(corpus, tmp_path):
     assert output.retrieved_ids[0] == 1
     assert pipeline.last_debug["search_queries"]
     assert pipeline.last_debug["retrieved_ids"] == output.retrieved_ids
-
 
 def test_cag_pipeline_offline_end_to_end(corpus, tmp_path):
     from conftest import FakeEmbedder
@@ -264,7 +248,6 @@ def test_cag_pipeline_offline_end_to_end(corpus, tmp_path):
     assert "CLB Multimedia PTIT" in covered_clubs
     assert "CLB Nhà Sáng Tạo Game PTIT (GCC)" in covered_clubs
 
-
 def test_evidence_selector_rerank_and_sibling_extras():
     from neorag.solution.focused import EvidenceSelector, QueryPlan
 
@@ -284,12 +267,10 @@ def test_evidence_selector_rerank_and_sibling_extras():
         search_queries=[("Phó Chủ nhiệm CLB Lập Trình PTIT 2024-2025", 1.0)],
     )
 
-    # 1. Sắp xếp lại nội bộ CORE_IDS: đưa doc2 (2024-2025) lên trước doc1 (2025-2026)
     reranked = EvidenceSelector._rerank_core_ids([64, 65], doc_map, plan, hybrid_rank)
     assert reranked[0] == 65
     assert reranked[1] == 64
 
-    # 2. Ưu tiên đoạn anh em cho EXTRA_IDS: doc3 (cùng Ban chủ nhiệm) được ưu tiên trước doc4 (Multimedia)
     extras = EvidenceSelector._prioritize_sibling_extras(
         core_ids=[65],
         llm_extra_ids=[85],
@@ -297,10 +278,9 @@ def test_evidence_selector_rerank_and_sibling_extras():
         hybrid_ids=[64, 66, 85],
         limit=3,
     )
-    assert extras[0] == 64  # sibling cùng topic
-    assert extras[1] == 66  # sibling cùng topic
-    assert 85 in extras     # doc khác topic/CLB xếp sau
-
+    assert extras[0] == 64
+    assert extras[1] == 66
+    assert 85 in extras
 
 def test_bm25_saturation_and_temporal_penalty():
     import numpy as np
@@ -308,20 +288,17 @@ def test_bm25_saturation_and_temporal_penalty():
     from neorag.solution.index import saturate_bm25
     from neorag.solution.vietnamese import align_canonical_entities, parse_temporals
 
-    # BM25 Saturation: điểm bão hòa mượt, chặn bùng nổ
     raw_scores = np.array([0.0, 1.2, 12.0, 60.0], dtype=np.float32)
     saturated = saturate_bm25(raw_scores, k=12.0)
     assert saturated[0] == 0.0
-    assert 0.05 < saturated[1] < 0.15  # 1.2 / 13.2 ~ 0.09
-    assert abs(saturated[2] - 0.5) < 1e-5  # 12 / 24 = 0.5
-    assert 0.8 < saturated[3] < 0.9   # 60 / 72 ~ 0.83
+    assert 0.05 < saturated[1] < 0.15
+    assert abs(saturated[2] - 0.5) < 1e-5
+    assert 0.8 < saturated[3] < 0.9
 
-    # Parse temporals
     q_temp = parse_temporals("Chủ nhiệm nhiệm kỳ 2021-2022 và năm 2024")
     assert (2021, 2022) in q_temp["ranges"]
     assert {2021, 2022, 2024} <= q_temp["years"]
 
-    # Align canonical entities
     raw_ans = "CLB Lập trình PTIT ở nk 2025 - 2026 mở đợt tuyển gen 14 vào t8/2026."
     canonical = align_canonical_entities(raw_ans)
     assert "CLB Lập Trình PTIT" in canonical

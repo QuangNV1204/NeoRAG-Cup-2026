@@ -1,5 +1,3 @@
-"""Phân tích câu hỏi và mở rộng truy vấn theo kiểu multi-query RAG."""
-
 from __future__ import annotations
 
 import re
@@ -28,7 +26,6 @@ CÂU HỎI: {query}"""
 
 _LINE_MARKER = re.compile(r"^\s*(?:[-*•+]|\d+[.)])\s*")
 
-
 @dataclass(frozen=True)
 class QueryAnalysis:
     query: str
@@ -40,13 +37,11 @@ class QueryAnalysis:
     keywords: list[str]
     ascii_query: bool
 
-
 @dataclass(frozen=True)
 class SearchQuery:
     text: str
     weight: float = 1.0
     kind: str = "original"
-
 
 @dataclass
 class QueryExpander:
@@ -80,7 +75,7 @@ class QueryExpander:
                 [{"role": "user", "content": _EXPANSION_PROMPT.format(query=query)}],
                 model=self.config.llm_model,
             )
-        except Exception as exc:  # pragma: no cover - phụ thuộc gateway
+        except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
             return []
 
@@ -97,13 +92,12 @@ class QueryExpander:
         return result
 
     def _llm_hyde(self, query: str) -> str:
-        """Query2doc: sinh đoạn văn giả định để cải thiện dense retrieval."""
         try:
             raw = self.llm.chat(
                 [{"role": "user", "content": _HYDE_PROMPT.format(query=query)}],
                 model=self.config.llm_model,
             )
-        except Exception as exc:  # pragma: no cover - phụ thuộc gateway
+        except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
             return ""
 
@@ -122,8 +116,6 @@ class QueryExpander:
             for club in MAIN_CLUBS:
                 result.append(f"{club} thành lập ngày tháng năm nào")
         if "Cơ cấu" in analysis.topics:
-            # Câu hỏi về ban/team: thêm truy vấn cấu trúc để các doc "Cơ cấu" lọt vào
-            # danh sách ứng viên, tránh việc câu hỏi chỉ khớp từ khóa kỹ năng/hoạt động.
             clubs = [c for c in analysis.clubs if c in MAIN_CLUBS]
             if clubs:
                 for club in clubs:
@@ -131,7 +123,6 @@ class QueryExpander:
             else:
                 result.append("các ban cơ cấu tổ chức câu lạc bộ")
         return result
-
 
 class QueryAnalyzer:
     def analyze(self, query: str) -> QueryAnalysis:
@@ -147,6 +138,5 @@ class QueryAnalyzer:
             keywords=content_words(query),
             ascii_query=not has_diacritics(query),
         )
-
 
 __all__ = ["QueryAnalysis", "QueryAnalyzer", "QueryExpander", "SearchQuery"]

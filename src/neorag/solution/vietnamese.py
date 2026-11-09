@@ -1,5 +1,3 @@
-"""Chuẩn hóa tiếng Việt, tách từ, mở rộng viết tắt sinh viên và làm sạch câu trả lời."""
-
 from __future__ import annotations
 
 import re
@@ -16,7 +14,6 @@ MAIN_CLUBS = [
 S2B_CLUB = "Cộng đồng S2B"
 ALL_CLUBS = [*MAIN_CLUBS, S2B_CLUB]
 
-# Từ dừng ở mức âm tiết. Không quá lớn để tránh mất từ khóa chuyên môn.
 STOPWORDS = frozenset(
     [
         "và",
@@ -84,8 +81,6 @@ _SPACES = re.compile(r"\s+")
 _CPP_PATTERN = re.compile(r"(?<!\w)c\+\+(?!\w)", flags=re.IGNORECASE)
 _CSHARP_PATTERN = re.compile(r"(?<!\w)c#(?!\w)", flags=re.IGNORECASE)
 
-# Lưu ý: KHÔNG gán "ben code" vào CLB Lập Trình PTIT vì trong ngữ cảnh GCC,
-# "bên code / bên vẽ" là hai nhánh Dev / Art của GCC.
 _CLUB_ALIASES: list[tuple[str, tuple[str, ...]]] = [
     (
         MAIN_CLUBS[0],
@@ -432,7 +427,6 @@ _TOPIC_RULES: dict[str, tuple[str, ...]] = {
     ),
 }
 
-# Ánh xạ nhóm chủ đề nhận từ câu hỏi sang nhãn topic thật trong corpus.
 _TOPIC_GROUPS: dict[str, tuple[str, ...]] = {
     "Tuyển thành viên": ("Tuyển thành viên",),
     "Ban chủ nhiệm": ("Ban chủ nhiệm",),
@@ -480,37 +474,27 @@ _TRAILING_ANSWERABLE_HEDGE = re.compile(
     flags=re.IGNORECASE,
 )
 
-
 def strip_diacritics(text: str) -> str:
-    """Bỏ dấu tiếng Việt, xử lý cả chữ đ/Đ (NFD không tách được hai ký tự này)."""
     text = text.replace("đ", "d").replace("Đ", "D")
     return "".join(c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn")
 
-
 ASCII_STOPWORDS = frozenset(strip_diacritics(w) for w in STOPWORDS)
 
-
 def _preserve_tech_tokens(text: str) -> str:
-    """Giữ phân biệt C, C++ và C# trước khi loại bỏ dấu câu."""
     text = _CPP_PATTERN.sub(" cpp ", text)
     text = _CSHARP_PATTERN.sub(" csharp ", text)
     return text
 
-
 def ascii_text(text: str) -> str:
     return _SPACES.sub(" ", strip_diacritics(normalize(text))).strip()
-
 
 def words(text: str) -> list[str]:
     return tokenize(text)
 
-
 def ascii_words(text: str) -> list[str]:
     return ascii_text(text).split()
 
-
 def ascii_content_words_raw(text: str) -> list[str]:
-    """Tokenizer BM25 bỏ dấu cơ bản (giữ tương thích ngược cho các bài test cũ)."""
     value = unicodedata.normalize("NFC", _preserve_tech_tokens(text)).lower()
     value = _STRIP_PUNCT.sub(" ", value)
     value = strip_diacritics(value)
@@ -520,9 +504,7 @@ def ascii_content_words_raw(text: str) -> list[str]:
         if (len(word) > 1 or word == "c" or word.isdigit()) and word not in ASCII_STOPWORDS
     ]
 
-
 def accented_bm25_tokens(text: str) -> list[str]:
-    """Tokenizer BM25 có dấu kèm bigram từ liền kề (phân biệt đối nội/đối ngoại, năm/nam...)."""
     value = _STRIP_PUNCT.sub(" ", _preserve_tech_tokens(normalize(text)))
     raw_tokens = [
         tok
@@ -532,20 +514,15 @@ def accented_bm25_tokens(text: str) -> list[str]:
     bigrams = [f"{raw_tokens[i]}_{raw_tokens[i + 1]}" for i in range(len(raw_tokens) - 1)]
     return [*raw_tokens, *bigrams]
 
-
 def ascii_bm25_tokens(text: str) -> list[str]:
-    """Tokenizer BM25 không dấu kèm bigram từ liền kề (bắt truy vấn gõ không dấu/viết tắt)."""
     raw_tokens = ascii_content_words_raw(text)
     bigrams = [f"{raw_tokens[i]}_{raw_tokens[i + 1]}" for i in range(len(raw_tokens) - 1)]
     return [*raw_tokens, *bigrams]
 
-
 def club_lexical_aliases(club: str) -> str:
     return _CLUB_LEXICAL_HEADER.get(club, club)
 
-
 def expand_student_slang(text: str) -> str:
-    """Mở rộng nhẹ các viết tắt phổ biến của sinh viên để tạo thêm một truy vấn phụ cho BM25/Dense."""
     lowered = ascii_text(text)
     additions: list[str] = []
     for short, full in _SLANG_EXPANSIONS:
@@ -555,24 +532,19 @@ def expand_student_slang(text: str) -> str:
         return text
     return f"{text} ({', '.join(additions)})"
 
-
 def content_words(text: str, ascii_only: bool = False) -> list[str]:
     if ascii_only:
         return [t for t in ascii_words(text) if len(t) > 1 and t not in ASCII_STOPWORDS]
     return [t for t in words(text) if len(t) > 1 and t not in STOPWORDS]
 
-
 def char_ngrams(text: str, n: int = 3) -> list[str]:
     value = "_".join(ascii_words(text))
     return [value[i : i + n] for i in range(max(1, len(value) - n + 1))]
 
-
 def has_diacritics(text: str) -> bool:
     return ascii_text(text).replace(" ", "") != normalize(text).replace(" ", "")
 
-
 def detect_clubs(text: str) -> list[str]:
-    """Trả về các CLB được nhắc tới rõ ràng theo ranh giới từ."""
     lowered = ascii_text(text)
     found: list[str] = []
     for club, aliases in _CLUB_ALIASES:
@@ -580,32 +552,26 @@ def detect_clubs(text: str) -> list[str]:
             found.append(club)
     return found
 
-
 def is_multi_club_question(text: str) -> bool:
     lowered = ascii_text(text)
     if any(marker in lowered for marker in _MULTI_MARKERS):
         return True
     return len([c for c in detect_clubs(text) if c in MAIN_CLUBS]) >= 2
 
-
 def is_founding_comparison(text: str) -> bool:
     lowered = ascii_text(text)
     founding = any(x in lowered for x in ("lau doi", "tre nhat", "thanh lap", "ra doi"))
     return founding and is_multi_club_question(text)
 
-
 def detect_topics(text: str) -> set[str]:
     lowered = ascii_text(text)
     return {topic for topic, keys in _TOPIC_RULES.items() if any(key in lowered for key in keys)}
 
-
 def topic_labels(topics: set[str]) -> set[str]:
-    """Đổi các nhóm chủ đề nhận từ câu hỏi thành nhãn topic có trong corpus."""
     labels: set[str] = set()
     for topic in topics:
         labels.update(_TOPIC_GROUPS.get(topic, ()))
     return labels
-
 
 _CANONICAL_PROPTIT = re.compile(r"\bCLB\s+[Ll]ập\s+trình\s+PTIT\b")
 _CANONICAL_GCC = re.compile(r"\bCLB\s+[Nn]hà\s+sáng\s+tạo\s+Game\s+PTIT\b")
@@ -619,9 +585,7 @@ _CANONICAL_MONTH = re.compile(r"\bt(\d{1,2})\s*/\s*(20\d\d)\b", flags=re.IGNOREC
 _RANGE_YEAR_RE = re.compile(r"\b(20\d\d)\s*[-–/]\s*(20\d\d)\b")
 _SINGLE_YEAR_RE = re.compile(r"\b(201\d|202\d|203\d)\b")
 
-
 def parse_temporals(text: str) -> dict[str, Any]:
-    """Trích xuất mốc thời gian (dải năm, nhiệm kỳ, năm đơn lẻ) từ câu hỏi hoặc tài liệu."""
     ranges: list[tuple[int, int]] = []
     years: set[int] = set()
     for m in _RANGE_YEAR_RE.finditer(text):
@@ -634,13 +598,7 @@ def parse_temporals(text: str) -> dict[str, Any]:
         years.add(int(y_str))
     return {"ranges": ranges, "years": years}
 
-
 def align_canonical_entities(text: str) -> str:
-    """Đồng bộ định dạng năm/nhiệm kỳ/tên CLB theo quy ước chuẩn của tập Train.
-
-    Tối ưu ROUGE-L và Groundedness bằng cách chuẩn hóa các biến thể chính tả/viết tắt
-    về đúng dạng chuẩn mà benchmark và ground truth sử dụng.
-    """
     if not text:
         return text
     text = _CANONICAL_PROPTIT.sub("CLB Lập Trình PTIT", text)
@@ -654,11 +612,8 @@ def align_canonical_entities(text: str) -> str:
     text = _CANONICAL_MONTH.sub(r"tháng \1/\2", text)
     return text
 
-
 def clean_answer(text: str, max_chars: int = 2000) -> str:
-    """Bỏ markdown/gạch đầu dòng/trích dẫn ID, gộp thành đoạn văn để hợp với ROUGE-L và judge."""
     text = re.sub(r"\*\*|__|`", "", text)
-    # Bỏ mọi dạng trích dẫn ID như [12], [1, 2], (id: 12), (id: [1]), [id: 12]
     text = re.sub(r"\[\s*\d+(?:\s*,\s*\d+)*\s*\]", "", text)
     text = re.sub(r"\(?\s*id\s*[:：]?\s*\[?\d+(?:\s*,\s*\d+)*\]?\s*\)?", "", text, flags=re.I)
     lines = []
@@ -672,16 +627,13 @@ def clean_answer(text: str, max_chars: int = 2000) -> str:
             answer = answer[len(prefix) :].strip()
     return answer[:max_chars]
 
-
 def sanitize_answer(text: str, status: str = "ANSWERABLE", max_chars: int = 2000) -> str:
-    """Làm sạch hậu kỳ an toàn, bảo vệ tuyệt đối câu từ chối (abstention) và nguồn trích dẫn thật."""
     ans = clean_answer(text, max_chars=max_chars * 2)
     ans = _GENERIC_META_PREFIX.sub("", ans).strip()
     ans = _FALSE_YESNO_BEFORE_ABSTAIN.sub("", ans).strip()
     if status.upper() == "UNANSWERABLE":
         ans = _BARE_YESNO_START.sub("", ans).strip()
     elif status.upper() == "ANSWERABLE":
-        # Với câu trả lời đầy đủ, loại bỏ các câu phân bua/rào đón thừa thãi ở cuối đoạn
         trimmed = _TRAILING_ANSWERABLE_HEDGE.sub("", ans).strip()
         if len(trimmed) >= 50 and any(trimmed.endswith(p) for p in (".", "!", "?")):
             ans = trimmed
@@ -689,7 +641,6 @@ def sanitize_answer(text: str, status: str = "ANSWERABLE", max_chars: int = 2000
         ans = ans[0].upper() + ans[1:]
     ans = align_canonical_entities(ans)
     return clean_answer(ans, max_chars=max_chars)
-
 
 __all__ = [
     "ALL_CLUBS",
